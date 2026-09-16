@@ -1,0 +1,702 @@
+    46→    46→
+    47→    47→// ---------- types ----------
+    48→    48→
+    49→    49→type LeadRow = {
+    50→    50→  id: string
+    51→    51→  leadCode: string
+    52→    52→  department: string
+    53→    53→  customerName: string
+    54→    54→  companyName: string | null
+    55→    55→  mobile: string
+    56→    56→  stage: { id: string; label: string; extra: string | null } | null
+    57→    57→  disposition: { id: string; label: string; extra: string | null } | null
+    58→    58→  subDisposition: { id: string; label: string } | null
+    59→    59→  priority: string | null
+    60→    60→  estimatedValue: number | null
+    61→    61→  nextFollowUpAt: string | null
+    62→    62→  isSticky: boolean
+    63→    63→  status: string
+    64→    64→}
+    65→    65→
+    66→    66→type LeadsResponse = {
+    67→    67→  leads: LeadRow[]
+    68→    68→  total: number
+    69→    69→  page: number
+    70→    70→  pageSize: number
+    71→    71→}
+    72→    72→
+    73→    73→type CallItem = {
+    74→    74→  id: string
+    75→    75→  lead: { id: string; leadCode: string; customerName: string; mobile: string; department: string } | null
+    76→    76→  user: { id: string; name: string } | null
+    77→    77→  direction: string
+    78→    78→  status: string
+    79→    79→  durationSec: number
+    80→    80→  notes: string | null
+    81→    81→  channel: string
+    82→    82→  isVideo: boolean
+    83→    83→  createdAt: string
+    84→    84→}
+    85→    85→
+    86→    86→type CallsResponse = {
+    87→    87→  calls: CallItem[]
+    88→    88→  total: number
+    89→    89→  summary: {
+    90→    90→    total: number
+    91→    91→    incoming: number
+    92→    92→    outgoing: number
+    93→    93→    missed: number
+    94→    94→    connected: number
+    95→    95→    notConnected: number
+    96→    96→    avgTalkTimeSec: number
+    97→    97→  }
+    98→    98→}
+    99→    99→
+   100→   100→type DetailLead = {
+   101→   101→  id: string
+   102→   102→  leadCode: string
+   103→   103→  department: string
+   104→   104→  customerName: string
+   105→   105→  companyName: string | null
+   106→   106→  mobile: string
+   107→   107→  whatsapp: string | null
+   108→   108→  productInterest: string | null
+   109→   109→  requirementNotes: string | null
+   110→   110→  notes: string | null
+   111→   111→  stage: { id: string; label: string; extra: string | null } | null
+   112→   112→  disposition: { id: string; label: string; extra: string | null } | null
+   113→   113→  subDisposition: { id: string; label: string } | null
+   114→   114→  priority: string | null
+   115→   115→  estimatedValue: number | null
+   116→   116→  nextFollowUpAt: string | null
+   117→   117→  lastContactAt: string | null
+   118→   118→  isSticky: boolean
+   119→   119→  status: string
+   120→   120→}
+   121→   121→
+   122→   122→type LeadBundle = {
+   123→   123→  lead: DetailLead
+   124→   124→  followups: Array<{ id: string; dueAt: string; status: string; note: string | null }>
+   125→   125→  callLogs: CallItem[]
+   126→   126→}
+   127→   127→
+   128→   128→type PickerLead = { id: string; leadCode: string; customerName: string; mobile: string; department: string }
+   129→   129→
+   130→   130→type QueueTab = 'overdue' | 'today' | 'mine'
+   131→   131→
+   132→   132→const TABS: { id: QueueTab; label: string }[] = [
+   133→   133→  { id: 'overdue', label: 'Overdue' },
+   134→   134→  { id: 'today', label: 'Today' },
+   135→   135→  { id: 'mine', label: 'All Mine' },
+   136→   136→]
+   137→   137→
+   138→   138→// ---------- lead picker (searchable, debounced) ----------
+   139→   139→
+   140→   140→function LeadPicker({ value, onSelect }: { value: PickerLead | null; onSelect: (l: PickerLead | null) => void }) {
+   141→   141→  const [q, setQ] = useState('')
+   142→   142→  const [results, setResults] = useState<PickerLead[]>([])
+   143→   143→  const [loading, setLoading] = useState(false)
+   144→   144→
+   145→   145→  useEffect(() => {
+   146→   146→    if (value) return
+   147→   147→    let cancelled = false
+   148→   148→    const t = setTimeout(() => {
+   149→   149→      setLoading(true)
+   150→   150→      api<{ leads: PickerLead[] }>(`/api/leads${qs({ q: q || undefined, pageSize: 10 })}`)
+   151→   151→        .then((res) => {
+   152→   152→          if (!cancelled) setResults(res.leads ?? [])
+   153→   153→        })
+   154→   154→        .catch(() => {
+   155→   155→          if (!cancelled) setResults([])
+   156→   156→        })
+   157→   157→        .finally(() => {
+   158→   158→          if (!cancelled) setLoading(false)
+   159→   159→        })
+   160→   160→    }, 350)
+   161→   161→    return () => {
+   162→   162→      cancelled = true
+   163→   163→      clearTimeout(t)
+   164→   164→    }
+   165→   165→  }, [q, value])
+   166→   166→
+   167→   167→  if (value) {
+   168→   168→    return (
+   169→   169→      <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+   170→   170→        <div className="min-w-0">
+   171→   171→          <p className="truncate text-sm font-medium text-stone-800">
+   172→   172→            {value.customerName} <span className="font-mono text-xs text-stone-500">{value.leadCode}</span>
+   173→   173→          </p>
+   174→   174→          <p className="text-xs text-stone-500">
+   175→   175→            {value.mobile} · {value.department}
+   176→   176→          </p>
+   177→   177→        </div>
+   178→   178→        <Button type="button" variant="ghost" size="sm" onClick={() => onSelect(null)}>
+   179→   179→          Change
+   180→   180→        </Button>
+   181→   181→      </div>
+   182→   182→    )
+   183→   183→  }
+   184→   184→
+   185→   185→  return (
+   186→   186→    <div className="space-y-1.5">
+   187→   187→      <Input placeholder="Search lead by name / mobile / code..." value={q} onChange={(e) => setQ(e.target.value)} />
+   188→   188→      <div className="max-h-44 overflow-y-auto rounded-lg border border-stone-200">
+   189→   189→        {loading ? (
+   190→   190→          <div className="flex items-center gap-2 px-3 py-3 text-xs text-stone-500">
+   191→   191→            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Searching...
+   192→   192→          </div>
+   193→   193→        ) : results.length === 0 ? (
+   194→   194→          <p className="px-3 py-3 text-xs text-stone-500">No leads found</p>
+   195→   195→        ) : (
+   196→   196→          results.map((l) => (
+   197→   197→            <button
+   198→   198→              key={l.id}
+   199→   199→              type="button"
+   200→   200→              onClick={() => onSelect(l)}
+   201→   201→              className="flex w-full items-center justify-between gap-2 border-b border-stone-100 px-3 py-2 text-left text-sm last:border-0 hover:bg-emerald-50"
+   202→   202→            >
+   203→   203→              <span className="min-w-0 truncate">
+   204→   204→                <span className="font-medium text-stone-800">{l.customerName}</span>{' '}
+   205→   205→                <span className="font-mono text-xs text-stone-400">{l.leadCode}</span>
+   206→   206→              </span>
+   207→   207→              <span className="shrink-0 text-xs text-stone-500">{l.mobile}</span>
+   208→   208→            </button>
+   209→   209→          ))
+   210→   210→        )}
+   211→   211→      </div>
+   212→   212→    </div>
+   213→   213→  )
+   214→   214→}
+   215→   215→
+   216→   216→// ---------- component ----------
+   217→   217→
+   218→   218→export default function DialerView() {
+   219→   219→  const user = useAppStore((s) => s.user)
+   220→   220→  const setView = useAppStore((s) => s.setView)
+   221→   221→  const { toast } = useToast()
+   222→   222→  const masters = useMasters()
+   223→   223→
+   224→   224→  const [summary, setSummary] = useState<CallsResponse['summary'] | null>(null)
+   225→   225→  const [kpisLoading, setKpisLoading] = useState(true)
+   226→   226→
+   227→   227→  const [tab, setTab] = useState<QueueTab>('overdue')
+   228→   228→  const [queue, setQueue] = useState<LeadRow[]>([])
+   229→   229→  const [queueLoading, setQueueLoading] = useState(true)
+   230→   230→  const [reloadKey, setReloadKey] = useState(0)
+   231→   231→
+   232→   232→  const [selected, setSelected] = useState<LeadRow | null>(null)
+   233→   233→  const [bundle, setBundle] = useState<LeadBundle | null>(null)
+   234→   234→  const [leadCalls, setLeadCalls] = useState<CallItem[]>([])
+   235→   235→  const [panelLoading, setPanelLoading] = useState(false)
+   236→   236→
+   237→   237→  // call modal
+   238→   238→  const [callOpen, setCallOpen] = useState(false)
+   239→   239→  const [phase, setPhase] = useState<'calling' | 'disposition'>('calling')
+   240→   240→  const [seconds, setSeconds] = useState(0)
+   241→   241→  const [endingCall, setEndingCall] = useState(false)
+   242→   242→  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   243→   243→
+   244→   244→  // disposition form
+   245→   245→  const [dispId, setDispId] = useState('')
+   246→   246→  const [subId, setSubId] = useState('')
+   247→   247→  const [callbackAt, setCallbackAt] = useState('')
+   248→   248→  const [followUpAt, setFollowUpAt] = useState('')
+   249→   249→  const [estValue, setEstValue] = useState('')
+   250→   250→  const [payAmount, setPayAmount] = useState('')
+   251→   251→  const [payMode, setPayMode] = useState('UPI')
+   252→   252→  const [dispNote, setDispNote] = useState('')
+   253→   253→  const [savingDisp, setSavingDisp] = useState(false)
+   254→   254→
+   255→   255→  // not-connected quick action
+   256→   256→  const [notConnPending, setNotConnPending] = useState(false)
+   257→   257→
+   258→   258→  // incoming call dialog
+   259→   259→  const [incomingOpen, setIncomingOpen] = useState(false)
+   260→   260→  const [incomingLead, setIncomingLead] = useState<PickerLead | null>(null)
+   261→   261→  const [incomingStatus, setIncomingStatus] = useState('CONNECTED')
+   262→   262→  const [incomingMins, setIncomingMins] = useState('2')
+   263→   263→  const [incomingNotes, setIncomingNotes] = useState('')
+   264→   264→  const [incomingPending, setIncomingPending] = useState(false)
+   265→   265→
+   266→   266→  // today calls dialog
+   267→   267→  const [callsOpen, setCallsOpen] = useState(false)
+   268→   268→  const [callsStatus, setCallsStatus] = useState('')
+   269→   269→  const [callsList, setCallsList] = useState<CallItem[]>([])
+   270→   270→  const [callsLoading, setCallsLoading] = useState(false)
+   271→   271→
+   272→   272→  const todayRange = useMemo(() => {
+   273→   273→    const start = new Date()
+   274→   274→    start.setHours(0, 0, 0, 0)
+   275→   275→    const end = new Date()
+   276→   276→    end.setHours(23, 59, 59, 999)
+   277→   277→    return { from: start.toISOString(), to: end.toISOString() }
+   278→   278→  }, [])
+   279→   279→
+   280→   280→  // ---------- loaders ----------
+   281→   281→
+   282→   282→  const loadKpis = useCallback(async () => {
+   283→   283→    try {
+   284→   284→      const res = await api<CallsResponse>(
+   285→   285→        `/api/calls${qs({ from: todayRange.from, to: todayRange.to, page: 1, pageSize: 1 })}`
+   286→   286→      )
+   287→   287→      setSummary(res.summary)
+   288→   288→    } catch (e) {
+   289→   289→      toast({ title: 'Failed to load call stats', description: (e as Error).message, variant: 'destructive' })
+   290→   290→    } finally {
+   291→   291→      setKpisLoading(false)
+   292→   292→    }
+   293→   293→  }, [todayRange, toast])
+   294→   294→
+   295→   295→  const loadQueue = useCallback(async () => {
+   296→   296→    setQueueLoading(true)
+   297→   297→    try {
+   298→   298→      const params =
+   299→   299→        tab === 'overdue'
+   300→   300→          ? { followup: 'overdue', sort: 'nextFollowUpAt', dir: 'asc' }
+   301→   301→          : tab === 'today'
+   302→   302→            ? { followup: 'today', sort: 'nextFollowUpAt', dir: 'asc' }
+   303→   303→            : { assignedToId: user?.id, status: 'ACTIVE' }
+   304→   304→      const res = await api<LeadsResponse>(`/api/leads${qs({ ...params, pageSize: 50 })}`)
+   305→   305→      setQueue(res.leads ?? [])
+   306→   306→    } catch (e) {
+   307→   307→      toast({ title: 'Failed to load calling queue', description: (e as Error).message, variant: 'destructive' })
+   308→   308→    } finally {
+   309→   309→      setQueueLoading(false)
+   310→   310→    }
+   311→   311→  }, [tab, user?.id, toast])
+   312→   312→
+   313→   313→  useEffect(() => {
+   314→   314→    loadKpis()
+   315→   315→  }, [loadKpis, reloadKey])
+   316→   316→
+   317→   317→  useEffect(() => {
+   318→   318→    loadQueue()
+   319→   319→  }, [loadQueue, reloadKey])
+   320→   320→
+   321→   321→  const refreshAll = useCallback(() => setReloadKey((k) => k + 1), [])
+   322→   322→
+   323→   323→  const openLeadPanel = useCallback(
+   324→   324→    async (lead: LeadRow) => {
+   325→   325→      setSelected(lead)
+   326→   326→      setBundle(null)
+   327→   327→      setLeadCalls([])
+   328→   328→      setPanelLoading(true)
+   329→   329→      const [callsRes, detailRes] = await Promise.allSettled([
+   330→   330→        api<CallsResponse>(`/api/calls${qs({ leadId: lead.id, pageSize: 5 })}`),
+   331→   331→        api<LeadBundle>(`/api/leads/detail${qs({ id: lead.id })}`),
+   332→   332→      ])
+   333→   333→      if (callsRes.status === 'fulfilled') setLeadCalls(callsRes.value.calls ?? [])
+   334→   334→      if (detailRes.status === 'fulfilled') setBundle(detailRes.value)
+   335→   335→      else
+   336→   336→        toast({
+   337→   337→          title: 'Failed to load lead history',
+   338→   338→          description: detailRes.status === 'rejected' ? (detailRes.reason as Error).message : undefined,
+   339→   339→          variant: 'destructive',
+   340→   340→        })
+   341→   341→      setPanelLoading(false)
+   342→   342→    },
+   343→   343→    [toast]
+   344→   344→  )
+   345→   345→
+   346→   346→  // ---------- call timer ----------
+   347→   347→
+   348→   348→  useEffect(() => {
+   349→   349→    if (!callOpen || phase !== 'calling') return
+   350→   350→    timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+   351→   351→    return () => {
+   352→   352→      if (timerRef.current) clearInterval(timerRef.current)
+   353→   353→      timerRef.current = null
+   354→   354→    }
+   355→   355→  }, [callOpen, phase])
+   356→   356→
+   357→   357→  const panelLead = bundle?.lead ?? null
+   358→   358→  const panelDept = panelLead?.department ?? selected?.department ?? user?.department ?? ''
+   359→   359→  const dispositionOptions = useMemo(() => masters.items('disposition', panelDept || undefined), [masters, panelDept])
+   360→   360→  const subOptions = useMemo(
+   361→   361→    () => (dispId ? masters.subItems(dispId, panelDept || undefined) : []),
+   362→   362→    [masters, dispId, panelDept]
+   363→   363→  )
+   364→   364→  const dispExtra = useMemo(() => dispositionExtra(masters.byId(dispId)?.extra), [masters, dispId])
+   365→   365→
+   366→   366→  const resetDispForm = useCallback(() => {
+   367→   367→    setDispId('')
+   368→   368→    setSubId('')
+   369→   369→    setCallbackAt('')
+   370→   370→    setFollowUpAt('')
+   371→   371→    setEstValue('')
+   372→   372→    setPayAmount('')
+   373→   373→    setPayMode('UPI')
+   374→   374→    setDispNote('')
+   375→   375→  }, [])
+   376→   376→
+   377→   377→  const startCall = () => {
+   378→   378→    setPhase('calling')
+   379→   379→    setSeconds(0)
+   380→   380→    resetDispForm()
+   381→   381→    setCallOpen(true)
+   382→   382→  }
+   383→   383→
+   384→   384→  const endCall = async () => {
+   385→   385→    if (!selected) return
+   386→   386→    setEndingCall(true)
+   387→   387→    try {
+   388→   388→      await api('/api/calls', {
+   389→   389→        method: 'POST',
+   390→   390→        body: {
+   391→   391→          leadId: selected.id,
+   392→   392→          direction: 'OUTGOING',
+   393→   393→          status: 'CONNECTED',
+   394→   394→          durationSec: seconds,
+   395→   395→        },
+   396→   396→      })
+   397→   397→      setPhase('disposition')
+   398→   398→      refreshAll()
+   399→   399→    } catch (e) {
+   400→   400→      toast({ title: 'Failed to log call', description: (e as Error).message, variant: 'destructive' })
+   401→   401→    } finally {
+   402→   402→      setEndingCall(false)
+   403→   403→    }
+   404→   404→  }
+   405→   405→
+   406→   406→  const submitDisposition = async () => {
+   407→   407→    if (!selected) return
+   408→   408→    if (!dispId) {
+   409→   409→      toast({ title: 'Select a disposition first', variant: 'destructive' })
+   410→   410→      return
+   411→   411→    }
+   412→   412→    if (dispExtra.showCallback && !callbackAt) {
+   413→   413→      toast({ title: 'Next Callback Date & Time is required', variant: 'destructive' })
+   414→   414→      return
+   415→   415→    }
+   416→   416→    if (dispExtra.showFollowUp && !followUpAt) {
+   417→   417→      toast({ title: 'Follow-up Date & Time is required', variant: 'destructive' })
+   418→   418→      return
+   419→   419→    }
+   420→   420→    setSavingDisp(true)
+   421→   421→    try {
+   422→   422→      await api('/api/leads', {
+   423→   423→        method: 'PATCH',
+   424→   424→        body: {
+   425→   425→          id: selected.id,
+   426→   426→          dispositionUpdate: {
+   427→   427→            dispositionId: dispId,
+   428→   428→            subDispositionId: subId || undefined,
+   429→   429→            callbackAt: dispExtra.showCallback ? callbackAt : undefined,
+   430→   430→            followUpAt: dispExtra.showFollowUp ? followUpAt : undefined,
+   431→   431→            estimatedValue: dispExtra.showEstimated && estValue ? Number(estValue) : undefined,
+   432→   432→            paymentAmount: dispExtra.showPayment && payAmount ? Number(payAmount) : undefined,
+   433→   433→            mode: dispExtra.showPayment ? payMode : undefined,
+   434→   434→            note: dispNote || undefined,
+   435→   435→          },
+   436→   436→        },
+   437→   437→      })
+   438→   438→      toast({ title: 'Call saved', description: 'Call log + disposition updated' })
+   439→   439→      setCallOpen(false)
+   440→   440→      refreshAll()
+   441→   441→      void openLeadPanel(selected)
+   442→   442→    } catch (e) {
+   443→   443→      toast({ title: 'Disposition failed', description: (e as Error).message, variant: 'destructive' })
+   444→   444→    } finally {
+   445→   445→      setSavingDisp(false)
+   446→   446→    }
+   447→   447→  }
+   448→   448→
+   449→   449→  const quickNotConnected = async () => {
+   450→   450→    if (!selected || notConnPending) return
+   451→   451→    setNotConnPending(true)
+   452→   452→    try {
+   453→   453→      await api('/api/calls', {
+   454→   454→        method: 'POST',
+   455→   455→        body: { leadId: selected.id, direction: 'OUTGOING', status: 'NOT_CONNECTED', durationSec: 0 },
+   456→   456→      })
+   457→   457→      const nc = masters
+   458→   458→        .items('disposition', selected.department)
+   459→   459→        .find((d) => d.label.toLowerCase().includes('not connected'))
+   460→   460→      if (nc) {
+   461→   461→        await api('/api/leads', {
+   462→   462→          method: 'PATCH',
+   463→   463→          body: { id: selected.id, dispositionUpdate: { dispositionId: nc.id } },
+   464→   464→        })
+   465→   465→      }
+   466→   466→      toast({ title: 'Not Connected call logged', description: `${selected.customerName} marked as not connected` })
+   467→   467→      refreshAll()
+   468→   468→      void openLeadPanel(selected)
+   469→   469→    } catch (e) {
+   470→   470→      toast({ title: 'Failed to log call', description: (e as Error).message, variant: 'destructive' })
+   471→   471→    } finally {
+   472→   472→      setNotConnPending(false)
+   473→   473→    }
+   474→   474→  }
+   475→   475→
+   476→   476→  const submitIncoming = async () => {
+   477→   477→    if (!incomingLead) {
+   478→   478→      toast({ title: 'Pick a lead for the incoming call', variant: 'destructive' })
+   479→   479→      return
+   480→   480→    }
+   481→   481→    setIncomingPending(true)
+   482→   482→    try {
+   483→   483→      await api('/api/calls', {
+   484→   484→        method: 'POST',
+   485→   485→        body: {
+   486→   486→          leadId: incomingLead.id,
+   487→   487→          direction: 'INCOMING',
+   488→   488→          status: incomingStatus,
+   489→   489→          durationSec: incomingStatus === 'MISSED' ? 0 : Math.max(0, Number(incomingMins) || 0) * 60,
+   490→   490→          notes: incomingNotes || undefined,
+   491→   491→        },
+   492→   492→      })
+   493→   493→      toast({ title: 'Incoming call logged', description: `${incomingLead.customerName} — ${incomingStatus}` })
+   494→   494→      setIncomingOpen(false)
+   495→   495→      setIncomingLead(null)
+   496→   496→      setIncomingNotes('')
+   497→   497→      setIncomingMins('2')
+   498→   498→      setIncomingStatus('CONNECTED')
+   499→   499→      refreshAll()
+   500→   500→    } catch (e) {
+   501→   501→      toast({ title: 'Failed to log incoming call', description: (e as Error).message, variant: 'destructive' })
+   502→   502→    } finally {
+   503→   503→      setIncomingPending(false)
+   504→   504→    }
+   505→   505→  }
+   506→   506→
+   507→   507→  // ---------- today calls dialog ----------
+   508→   508→
+   509→   509→  const loadCallsDialog = useCallback(async () => {
+   510→   510→    if (!callsOpen) return
+   511→   511→    setCallsLoading(true)
+   512→   512→    try {
+   513→   513→      const res = await api<CallsResponse>(
+   514→   514→        `/api/calls${qs({
+   515→   515→          from: todayRange.from,
+   516→   516→          to: todayRange.to,
+   517→   517→          status: callsStatus && callsStatus !== 'all' ? callsStatus : undefined,
+   518→   518→          page: 1,
+   519→   519→          pageSize: 50,
+   520→   520→        })}`
+   521→   521→      )
+   522→   522→      setCallsList(res.calls ?? [])
+   523→   523→    } catch (e) {
+   524→   524→      toast({ title: 'Failed to load calls', description: (e as Error).message, variant: 'destructive' })
+   525→   525→    } finally {
+   526→   526→      setCallsLoading(false)
+   527→   527→    }
+   528→   528→  }, [callsOpen, callsStatus, todayRange, toast])
+   529→   529→
+   530→   530→  useEffect(() => {
+   531→   531→    loadCallsDialog()
+   532→   532→  }, [loadCallsDialog])
+   533→   533→
+   534→   534→  const callColumns: Column<CallItem>[] = useMemo(
+   535→   535→    () => [
+   536→   536→      {
+   537→   537→        key: 'createdAt',
+   538→   538→        header: 'Time',
+   539→   539→        render: (c) => <span className="whitespace-nowrap text-xs">{formatDateTime(c.createdAt)}</span>,
+   540→   540→      },
+   541→   541→      {
+   542→   542→        key: 'lead',
+   543→   543→        header: 'Lead',
+   544→   544→        render: (c) =>
+   545→   545→          c.lead ? (
+   546→   546→            <div>
+   547→   547→              <p className="font-medium text-stone-800">{c.lead.customerName}</p>
+   548→   548→              <p className="text-xs text-stone-500">
+   549→   549→                {c.lead.mobile} · {c.lead.department}
+   550→   550→              </p>
+   551→   551→            </div>
+   552→   552→          ) : (
+   553→   553→            <span className="text-stone-400">—</span>
+   554→   554→          ),
+   555→   555→      },
+   556→   556→      { key: 'direction', header: 'Direction', render: (c) => <StatusBadge status={c.direction} variant="direction" /> },
+   557→   557→      { key: 'status', header: 'Status', render: (c) => <StatusBadge status={c.status} variant="call" /> },
+   558→   558→      { key: 'durationSec', header: 'Duration', render: (c) => <span>{formatDuration(c.durationSec)}</span> },
+   559→   559→      { key: 'user', header: 'Agent', render: (c) => <span>{c.user?.name ?? '—'}</span> },
+   560→   560→      {
+   561→   561→        key: 'notes',
+   562→   562→        header: 'Notes',
+   563→   563→        render: (c) => <span className="line-clamp-2 max-w-[220px] text-xs text-stone-500">{c.notes ?? '—'}</span>,
+   564→   564→      },
+   565→   565→    ],
+   566→   566→    []
+   567→   567→  )
+   568→   568→
+   569→   569→  // ---------- derived ----------
+   570→   570→
+   571→   571→  const dailyTarget = user?.dailyCallTarget ?? null
+   572→   572→  const callsProgress =
+   573→   573→    dailyTarget && summary ? Math.min(100, Math.round((summary.total / dailyTarget) * 100)) : undefined
+   574→   574→
+   575→   575→  const isOverdue = (d: string | null) => Boolean(d && new Date(d).getTime() < Date.now())
+   576→   576→
+   577→   577→  // ---------- render ----------
+   578→   578→
+   579→   579→  return (
+   580→   580→    <div>
+   581→   581→      <PageHeader title="Telecalling Dialer" subtitle="Work your calling queue — review old data before every call and log dispositions instantly">
+   582→   582→        <Button variant="outline" onClick={refreshAll} aria-label="Refresh dialer">
+   583→   583→          <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh
+   584→   584→        </Button>
+   585→   585→        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setIncomingOpen(true)}>
+   586→   586→          <PhoneIncoming className="mr-1.5 h-4 w-4" /> Log Incoming Call
+   587→   587→        </Button>
+   588→   588→      </PageHeader>
+   589→   589→
+   590→   590→      {/* KPI strip */}
+   591→   591→      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+   592→   592→        <KpiCard
+   593→   593→          label="Calls Today"
+   594→   594→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.total ?? 0)}
+   595→   595→          sub={dailyTarget ? `Daily target: ${dailyTarget} calls` : 'All calls logged today'}
+   596→   596→          icon={<Phone className="h-4 w-4" />}
+   597→   597→          progress={callsProgress}
+   598→   598→          onClick={() => {
+   599→   599→            setCallsStatus('')
+   600→   600→            setCallsOpen(true)
+   601→   601→          }}
+   602→   602→        />
+   603→   603→        <KpiCard
+   604→   604→          label="Connected Today"
+   605→   605→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.connected ?? 0)}
+   606→   606→          sub={`${summary?.outgoing ?? 0} outgoing · ${summary?.incoming ?? 0} incoming`}
+   607→   607→          icon={<PhoneCall className="h-4 w-4" />}
+   608→   608→          tone="positive"
+   609→   609→          onClick={() => {
+   610→   610→            setCallsStatus('CONNECTED')
+   611→   611→            setCallsOpen(true)
+   612→   612→          }}
+   613→   613→        />
+   614→   614→        <KpiCard
+   615→   615→          label="Missed Today"
+   616→   616→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.missed ?? 0)}
+   617→   617→          sub={`${summary?.notConnected ?? 0} not connected`}
+   618→   618→          icon={<PhoneMissed className="h-4 w-4" />}
+   619→   619→          tone="negative"
+   620→   620→          onClick={() => {
+   621→   621→            setCallsStatus('MISSED')
+   622→   622→            setCallsOpen(true)
+   623→   623→          }}
+   624→   624→        />
+   625→   625→        <KpiCard
+   626→   626→          label="Avg Talk Time"
+   627→   627→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : formatDuration(summary?.avgTalkTimeSec ?? 0)}
+   628→   628→          sub="Across all calls today"
+   629→   629→          icon={<Timer className="h-4 w-4" />}
+   630→   630→          onClick={() => {
+   631→   631→            setCallsStatus('')
+   632→   632→            setCallsOpen(true)
+   633→   633→          }}
+   634→   634→        />
+   635→   635→      </div>
+   636→   636→
+   637→   637→      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,430px)]">
+   638→   638→        {/* Calling queue */}
+   639→   639→        <section className="rounded-xl border border-stone-200 bg-white shadow-sm">
+   640→   640→          <div className="flex flex-col gap-2 border-b border-stone-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+   641→   641→            <div>
+   642→   642→              <h2 className="text-sm font-semibold text-stone-800">Calling Queue</h2>
+   643→   643→              <p className="text-xs text-stone-500">{queue.length} lead(s) in this bucket — tap a lead to open the call panel</p>
+   644→   644→            </div>
+   645→   645→            <Tabs value={tab} onValueChange={(v) => setTab(v as QueueTab)}>
+   646→   646→              <TabsList>
+   647→   647→                {TABS.map((t) => (
+   648→   648→                  <TabsTrigger key={t.id} value={t.id} className="text-xs">
+   649→   649→                    {t.label}
+   650→   650→                  </TabsTrigger>
+   651→   651→                ))}
+   652→   652→              </TabsList>
+   653→   653→            </Tabs>
+   654→   654→          </div>
+   655→   655→          <div className="max-h-[560px] space-y-2 overflow-y-auto p-3">
+   656→   656→            {queueLoading ? (
+   657→   657→              Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-lg" />)
+   658→   658→            ) : queue.length === 0 ? (
+   659→   659→              <EmptyState
+   660→   660→                icon={PhoneCall}
+   661→   661→                title="Queue is clear"
+   662→   662→                subtitle={
+   663→   663→                  tab === 'overdue'
+   664→   664→                    ? 'No overdue follow-ups. Great job!'
+   665→   665→                    : tab === 'today'
+   666→   666→                      ? 'No follow-ups due today. Switch to All Mine to keep dialing.'
+   667→   667→                      : 'No active leads assigned to you yet.'
+   668→   668→                }
+   669→   669→              />
+   670→   670→            ) : (
+   671→   671→              queue.map((lead) => (
+   672→   672→                <div
+   673→   673→                  key={lead.id}
+   674→   674→                  role="button"
+   675→   675→                  tabIndex={0}
+   676→   676→                  onClick={() => void openLeadPanel(lead)}
+   677→   677→                  onKeyDown={(e) => {
+   678→   678→                    if (e.key === 'Enter' || e.key === ' ') void openLeadPanel(lead)
+   679→   679→                  }}
+   680→   680→                  className={cn(
+   681→   681→                    'cursor-pointer rounded-lg border p-3 text-left transition-colors hover:bg-emerald-50/50',
+   682→   682→                    selected?.id === lead.id ? 'border-emerald-400 bg-emerald-50/60' : 'border-stone-200 bg-white'
+   683→   683→                  )}
+   684→   684→                >
+   685→   685→                  <div className="flex flex-wrap items-center gap-1.5">
+   686→   686→                    <span className="text-sm font-semibold text-stone-800">{lead.customerName}</span>
+   687→   687→                    {lead.companyName ? <span className="text-xs text-stone-500">· {lead.companyName}</span> : null}
+   688→   688→                    {lead.isSticky ? <Pin className="h-3 w-3 text-amber-500" aria-label="Sticky lead" /> : null}
+   689→   689→                    <StatusBadge status={lead.department} variant="dept" className="ml-auto" />
+   690→   690→                    {lead.stage ? (
+   691→   691→                      <Badge variant="outline" className="border-stone-200 font-medium text-stone-700">
+   692→   692→                        {lead.stage.label}
+   693→   693→                      </Badge>
+   694→   694→                    ) : null}
+   695→   695→                  </div>
+   696→   696→                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
+   697→   697→                    <span className="font-mono text-stone-600">{lead.mobile}</span>
+   698→   698→                    {lead.disposition ? <span>Disp: {lead.disposition.label}</span> : null}
+   699→   699→                    {lead.nextFollowUpAt ? (
+   700→   700→                      <span className={cn(isOverdue(lead.nextFollowUpAt) ? 'font-medium text-rose-600' : 'text-stone-500')}>
+   701→   701→                        Follow-up: {formatDateTime(lead.nextFollowUpAt)}
+   702→   702→                      </span>
+   703→   703→                    ) : null}
+   704→   704→                    {lead.estimatedValue ? (
+   705→   705→                      <span className="font-medium text-emerald-700">Est: {formatINR(lead.estimatedValue, true)}</span>
+   706→   706→                    ) : null}
+   707→   707→                  </div>
+   708→   708→                </div>
+   709→   709→              ))
+   710→   710→            )}
+   711→   711→          </div>
+   712→   712→        </section>
+   713→   713→
+   714→   714→        {/* Call panel — old data before calling */}
+   715→   715→        <section
+   716→   716→          className={cn(
+   717→   717→            'rounded-xl border border-stone-200 bg-white shadow-sm lg:order-last',
+   718→   718→            selected && 'order-first'
+   719→   719→          )}
+   720→   720→        >
+   721→   721→          {!selected ? (
+   722→   722→            <div className="p-4">
+   723→   723→              <EmptyState
+   724→   724→                icon={Phone}
+   725→   725→                title="Select a lead from the queue"
+   726→   726→                subtitle="The panel shows previous call logs, notes, disposition and requirement details BEFORE you dial — so you never call blind."
+   727→   727→              />
+   728→   728→            </div>
+   729→   729→          ) : panelLoading || !panelLead ? (
+   730→   730→            <div className="space-y-3 p-4">
+   731→   731→              <Skeleton className="h-8 w-2/3" />
+   732→   732→              <Skeleton className="h-4 w-1/2" />
+   733→   733→              <Skeleton className="h-20 w-full" />
+   734→   734→              <Skeleton className="h-20 w-full" />
+   735→   735→            </div>
+   736→   736→          ) : (
+   737→   737→            <div className="flex max-h-[640px] flex-col overflow-y-auto">
+   738→   738→              <div className="border-b border-stone-100 p-4">
+   739→   739→                <div className="flex flex-wrap items-center gap-2">
+   740→   740→                  <UserAvatar name={panelLead.customerName} className="h-10 w-10 text-sm" />
+   741→   741→                  <div className="min-w-0">
+   742→   742→                    <p className="flex items-center gap-1.5 truncate text-base font-semibold text-stone-900">
+   743→   743→                      {panelLead.customerName}
+   744→   744→                      {panelLead.isSticky ? <Pin className="h-3.5 w-3.5 text-amber-500" aria-label="Sticky lead" /> : null}
+   745→   745→                    </p>
+
+[showing lines 46-745 of 1126; use offset=746 with limit to continue reading]

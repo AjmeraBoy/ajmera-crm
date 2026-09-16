@@ -1,0 +1,625 @@
+     1→import { createHash } from 'crypto'
+     2→import { db } from '@/lib/db'
+     3→import { notify } from '@/lib/api'
+     4→import { emitSocketEvent } from './socket'
+     5→import { ensureConversation, findConversationByPhone, findLeadByPhone } from './conversation'
+     6→import { normalizePhone } from './whatsapp'
+     7→import { runAutomations } from './automation'
+     8→import { markWebhookReceived } from './settings'
+     9→import { redactSecrets } from './crypto'
+    10→
+    11→/**
+    12→ * WebhookService — production webhook processing for WhatsApp + Voice events.
+    13→ *
+    14→ * DESIGN:
+    15→ * - IDEMPOTENT: every event gets a dedupeKey (hash of provider + type + ids).
+    16→ *   Duplicate deliveries are recorded with status DUPLICATE and never
+    17→ *   create duplicate messages/call logs.
+    18→ * - NORMALIZER: accepts WhatsApp Cloud API format (Meta/Alendei BSP standard)
+    19→ *   and common flat variants. Raw payloads are always archived in
+    20→ *   WebhookEvent.payload for audit/debug.
+    21→ * - FAIL-SAFE: unknown formats are stored as UNRECOGNIZED (surfaced in the
+    22→ *   health dashboard) instead of failing the webhook with 500.
+    23→ */
+    24→
+    25→export type WebhookProcessResult = {
+    26→  status: 'PROCESSED' | 'DUPLICATE' | 'FAILED' | 'UNRECOGNIZED'
+    27→  detail: string
+    28→  eventId?: string
+    29→}
+    30→
+    31→function sha(text: string): string {
+    32→  return createHash('sha256').update(text).digest('hex').slice(0, 48)
+    33→}
+    34→
+    35→// ---------- WhatsApp ----------
+    36→
+    37→type NormInbound = {
+    38→  kind: 'message'
+    39→  phone: string
+    40→  profileName?: string
+    41→  waMessageId: string
+    42→  type: 'TEXT' | 'IMAGE' | 'PDF' | 'VIDEO' | 'VOICE' | 'LOCATION' | 'OTHER'
+    43→  body?: string
+    44→  mediaUrl?: string
+    45→  mediaName?: string
+    46→  timestamp?: Date
+    47→}
+    48→
+    49→type NormStatus = {
+    50→  kind: 'status'
+    51→  waMessageId: string
+    52→  status: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED'
+    53→  timestamp?: Date
+    54→  errorCode?: string
+    55→  errorMessage?: string
+    56→  recipient?: string
+    57→}
+    58→
+    59→type NormW = NormInbound | NormStatus | { kind: 'unknown'; reason: string }
+    60→
+    61→/** Normalize a WhatsApp webhook payload (Cloud API format + flat variants). */
+    62→export function normalizeWhatsappPayload(payload: Record<string, unknown>): NormW {
+    63→  // --- Meta WhatsApp Cloud API format: { entry: [ { changes: [ { value: { messages, statuses } } ] } ] }
+    64→  const entry = payload.entry as Array<Record<string, unknown>> | undefined
+    65→  if (Array.isArray(entry)) {
+    66→    for (const e of entry) {
+    67→      const changes = e.changes as Array<Record<string, unknown>> | undefined
+    68→      if (!Array.isArray(changes)) continue
+    69→      for (const ch of changes) {
+    70→        const value = ch.value as Record<string, unknown> | undefined
+    71→        if (!value) continue
+    72→        const messages = value.messages as Array<Record<string, unknown>> | undefined
+    73→        if (Array.isArray(messages) && messages.length > 0) {
+    74→          const m = messages[0]
+    75→          const from = String(m.from ?? '')
+    76→          const contact = (value.contacts as Array<Record<string, unknown>> | undefined)?.[0]
+    77→          const profile = ((contact?.profile as Record<string, unknown> | undefined)?.wa_id ?? (contact?.profile as Record<string,unknown>|undefined)?.name) as string | undefined
+    78→          const name = (contact?.profile as Record<string, unknown> | undefined)?.name as string | undefined
+    79→          const waType = String(m.type ?? 'text').toUpperCase()
+    80→          let type: NormInbound['type'] = 'OTHER'
+    81→          let body: string | undefined
+    82→          let mediaUrl: string | undefined
+    83→          let mediaName: string | undefined
+    84→          if (waType === 'TEXT') {
+    85→            type = 'TEXT'
+    86→            body = String((m.text as Record<string, unknown> | undefined)?.body ?? '')
+    87→          } else if (['IMAGE', 'DOCUMENT', 'VIDEO', 'AUDIO', 'VOICE', 'STICKER'].includes(waType)) {
+    88→            const med = m[waType.toLowerCase()] as Record<string, unknown> | undefined
+    89→            type = waType === 'DOCUMENT' ? 'PDF' : waType === 'AUDIO' ? 'VOICE' : (waType as NormInbound['type'])
+    90→            mediaName = String(med?.filename ?? med?.id ?? 'media')
+    91→            mediaUrl = String(med?.link ?? med?.id ?? '')
+    92→          } else if (waType === 'LOCATION') {
+    93→            const loc = m.location as Record<string, unknown> | undefined
+    94→            type = 'LOCATION'
+    95→            body = [loc?.name, loc?.address].filter(Boolean).map(String).join(', ') || 'Location shared'
+    96→          }
+    97→          return {
+    98→            kind: 'message',
+    99→            phone: from,
+   100→            profileName: (name ?? profile) as string | undefined,
+   101→            waMessageId: String(m.id ?? sha(JSON.stringify(m)).slice(0, 24)),
+   102→            type,
+   103→            body,
+   104→            mediaUrl,
+   105→            mediaName,
+   106→            timestamp: m.timestamp ? new Date(Number(m.timestamp) * 1000) : undefined,
+   107→          }
+   108→        }
+   109→        const statuses = value.statuses as Array<Record<string, unknown>> | undefined
+   110→        if (Array.isArray(statuses) && statuses.length > 0) {
+   111→          const st = statuses[0]
+   112→          const raw = String(st.status ?? '').toUpperCase()
+   113→          const err = (st.errors as Array<Record<string, unknown>> | undefined)?.[0]
+   114→          const status = (['SENT', 'DELIVERED', 'READ', 'FAILED'].includes(raw) ? raw : 'SENT') as NormStatus['status']
+   115→          return {
+   116→            kind: 'status',
+   117→            waMessageId: String(st.id ?? ''),
+   118→            status,
+   119→            timestamp: st.timestamp ? new Date(Number(st.timestamp) * 1000) : undefined,
+   120→            errorCode: err ? String(err.code ?? err.title ?? '') : undefined,
+   121→            errorMessage: err ? String(err.message ?? err.title ?? '') : undefined,
+   122→            recipient: st.recipient_id ? String(st.recipient_id) : undefined,
+   123→          }
+   124→        }
+   125→      }
+   126→    }
+   127→  }
+   128→
+   129→  // --- Flat variant: { from / phone / wa_id, message / text, id / message_id, type }
+   130→  const from = (payload.from ?? payload.phone ?? payload.phone_number ?? payload.wa_id) as string | undefined
+   131→  const text = (payload.text ?? (payload.message as Record<string, unknown> | undefined)?.text ?? (payload.message as string | undefined)) as string | string[] | undefined
+   132→  const id = (payload.id ?? payload.message_id ?? payload.messageId ?? payload.wamid) as string | undefined
+   133→  const status = (payload.status ?? payload.message_status) as string | undefined
+   134→  if (typeof status === 'string' && id) {
+   135→    const raw = status.toUpperCase()
+   136→    if (['SENT', 'DELIVERED', 'READ', 'FAILED'].includes(raw)) {
+   137→      return { kind: 'status', waMessageId: String(id), status: raw as NormStatus['status'], recipient: from ? String(from) : undefined }
+   138→    }
+   139→  }
+   140→  if (from && (text || payload.media || payload.image)) {
+   141→    let body: string | undefined
+   142→    if (typeof text === 'string') body = text
+   143→    else if (Array.isArray(text)) body = text.join(' ')
+   144→    else if (text && typeof text === 'object') body = String((text as Record<string, unknown>).body ?? '')
+   145→    return {
+   146→      kind: 'message',
+   147→      phone: String(from),
+   148→      profileName: (payload.name ?? payload.profileName ?? payload.sender_name) as string | undefined,
+   149→      waMessageId: String(id ?? sha(JSON.stringify(payload)).slice(0, 24)),
+   150→      type: 'TEXT',
+   151→      body: body ?? 'Media message',
+   152→      mediaUrl: (payload.mediaUrl ?? payload.media_url) as string | undefined,
+   153→      mediaName: (payload.mediaName ?? payload.media_name) as string | undefined,
+   154→    }
+   155→  }
+   156→  return { kind: 'unknown', reason: 'Payload did not match Cloud API or flat message/status formats' }
+   157→}
+   158→
+   159→/** Process POST /api/webhooks/whatsapp payload. Idempotent. */
+   160→export async function processWhatsappWebhook(
+   161→  payload: Record<string, unknown>,
+   162→  ip?: string
+   163→): Promise<WebhookProcessResult> {
+   164→  await markWebhookReceived()
+   165→
+   166→  // Hub verification (Meta-style GET is handled by the route; some providers POST verify too)
+   167→  if (payload.hub_challenge) {
+   168→    return { status: 'PROCESSED', detail: 'verification challenge acknowledged' }
+   169→  }
+   170→
+   171→  const norm = normalizeWhatsappPayload(payload)
+   172→  const rawJson = redactSecrets(JSON.stringify(payload))
+   173→
+   174→  // Idempotency key: provider message id + kind; fallback: full payload hash
+   175→  const idsForHash =
+   176→    norm.kind === 'message' ? `msg:${norm.waMessageId}` : norm.kind === 'status' ? `status:${norm.waMessageId}:${norm.status}` : `raw:${sha(rawJson)}`
+   177→  const dedupeKey = sha(`whatsapp:${idsForHash}`)
+   178→
+   179→  const existing = await db.webhookEvent.findUnique({ where: { dedupeKey } })
+   180→  if (existing && existing.processingStatus === 'PROCESSED') {
+   181→    return { status: 'DUPLICATE', detail: 'Event already processed (idempotent).', eventId: existing.id }
+   182→  }
+   183→
+   184→  const event = existing
+   185→    ? await db.webhookEvent.update({ where: { id: existing.id }, data: { payload: rawJson, ip, processingStatus: 'RECEIVED' } })
+   186→    : await db.webhookEvent.create({
+   187→        data: {
+   188→          dedupeKey,
+   189→          provider: 'WHATSAPP',
+   190→          eventType: norm.kind === 'message' ? 'MESSAGE' : norm.kind === 'status' ? 'MESSAGE_STATUS' : 'UNKNOWN',
+   191→          eventId: norm.kind !== 'unknown' ? norm.waMessageId : undefined,
+   192→          payload: rawJson,
+   193→          processingStatus: 'RECEIVED',
+   194→          ip: ip ?? null,
+   195→        },
+   196→      })
+   197→
+   198→  try {
+   199→    if (norm.kind === 'unknown') {
+   200→      await db.webhookEvent.update({
+   201→        where: { id: event.id },
+   202→        data: { processingStatus: 'UNRECOGNIZED', error: norm.reason, processedAt: new Date() },
+   203→      })
+   204→      return { status: 'UNRECOGNIZED', detail: norm.reason, eventId: event.id }
+   205→    }
+   206→
+   207→    if (norm.kind === 'message') {
+   208→      const detail = await handleInboundMessage(norm)
+   209→      await db.webhookEvent.update({
+   210→        where: { id: event.id },
+   211→        data: {
+   212→          processingStatus: 'PROCESSED',
+   213→          processedAt: new Date(),
+   214→          leadId: detail.leadId,
+   215→          phoneNumber: normalizePhone(norm.phone),
+   216→          waId: normalizePhone(norm.phone),
+   217→          eventType: 'MESSAGE',
+   218→        },
+   219→      })
+   220→      return { status: 'PROCESSED', detail: detail.summary, eventId: event.id }
+   221→    }
+   222→
+   223→    // status
+   224→    const detail = await handleStatusEvent(norm)
+   225→    await db.webhookEvent.update({
+   226→      where: { id: event.id },
+   227→      data: { processingStatus: 'PROCESSED', processedAt: new Date(), eventType: 'MESSAGE_STATUS' },
+   228→    })
+   229→    return { status: 'PROCESSED', detail, eventId: event.id }
+   230→  } catch (e) {
+   231→    const msg = redactSecrets(e instanceof Error ? e.message : String(e)).slice(0, 500)
+   232→    await db.webhookEvent.update({
+   233→      where: { id: event.id },
+   234→      data: { processingStatus: 'FAILED', error: msg, processedAt: new Date() },
+   235→    })
+   236→    console.error('[webhook-whatsapp-fail]', e)
+   237→    return { status: 'FAILED', detail: msg, eventId: event.id }
+   238→  }
+   239→}
+   240→
+   241→async function handleInboundMessage(m: NormInbound): Promise<{ summary: string; leadId: string | null }> {
+   242→  const ctx = await ensureConversation(m.phone, {
+   243→    name: m.profileName ?? null,
+   244→    autoCreateLead: true,
+   245→  })
+   246→  const convId = ctx.conversation.id
+   247→  const now = m.timestamp ?? new Date()
+   248→
+   249→  // Duplicate WhatsApp message guard (same waMessageId already stored)
+   250→  const dupMessage = m.waMessageId
+   251→    ? await db.whatsAppMessage.findFirst({ where: { providerMessageId: m.waMessageId, direction: 'IN' } })
+   252→    : null
+   253→  if (dupMessage) return { summary: 'Duplicate inbound message ignored (idempotent).', leadId: ctx.conversation.leadId }
+   254→
+   255→  const message = await db.whatsAppMessage.create({
+   256→    data: {
+   257→      conversationId: convId,
+   258→      direction: 'IN',
+   259→      type: m.type,
+   260→      body: m.body ?? null,
+   261→      mediaUrl: m.mediaUrl ?? null,
+   262→      mediaName: m.mediaName ?? null,
+   263→      providerMessageId: m.waMessageId || null,
+   264→      status: 'SENT',
+   265→      sentAt: now,
+   266→      createdAt: now,
+   267→    },
+   268→  })
+   269→
+   270→  const conv = await db.whatsAppConversation.update({
+   271→    where: { id: convId },
+   272→    data: {
+   273→      unreadCount: { increment: 1 },
+   274→      lastMessage: (m.body ?? m.mediaName ?? '[media]').slice(0, 300),
+   275→      lastMessageAt: now,
+   276→      lastInboundAt: now,
+   277→    },
+   278→  })
+   279→
+   280→  let leadId = ctx.conversation.leadId
+   281→  if (!leadId && ctx.created) {
+   282→    // conversation created without lead (autoCreateLead false) — try to attach now
+   283→    const lead = await findLeadByPhone(m.phone)
+   284→    if (lead) {
+   285→      await db.whatsAppConversation.update({ where: { id: convId }, data: { leadId: lead.id } })
+   286→      leadId = lead.id
+   287→    }
+   288→  }
+   289→
+   290→  if (leadId) {
+   291→    const lead = await db.lead.findUnique({
+   292→      where: { id: leadId },
+   293→      select: { optInStatus: true, optInAt: true },
+   294→    })
+   295→    await db.lead.update({
+   296→      where: { id: leadId },
+   297→      data: {
+   298→        lastWaMessage: (m.body ?? m.mediaName ?? '[media]').slice(0, 200),
+   299→        lastWaMessageAt: now,
+   300→        lastWaDirection: 'IN',
+   301→        lastContactAt: now,
+   302→        waStatus: 'AVAILABLE',
+   303→        ...(lead && lead.optInStatus !== 'OPTED_IN'
+   304→          ? { optInStatus: 'OPTED_IN', optInAt: now, optInSource: 'INBOUND_MESSAGE' }
+   305→          : {}),
+   306→      },
+   307→    })
+   308→    await db.activity.create({
+   309→      leadId,
+   310→      type: 'WHATSAPP',
+   311→      title: 'WhatsApp message received',
+   312→      description: (m.body ?? m.mediaName ?? '[media]').slice(0, 160),
+   313→    })
+   314→  }
+   315→
+   316→  // Real-time: conversation room + owner + role broadcast
+   317→  const events: Parameters<typeof emitSocketEvent>[0][] = [
+   318→    { room: `conversation:${convId}`, event: 'whatsapp:new-message', data: { message, conversationId: convId, direction: 'IN' } },
+   319→    { room: 'whatsapp', event: 'whatsapp:conversation', data: { conversationId: convId, phone: conv.phone, lastMessage: conv.lastMessage, unreadCount: conv.unreadCount } },
+   320→  ]
+   321→  for (const ev of events) await emitSocketEvent(ev)
+   322→
+   323→  if (ctx.conversation.ownerId) {
+   324→    await notify(
+   325→      ctx.conversation.ownerId,
+   326→      'New WhatsApp message',
+   327→      `${conv.phone}: ${(m.body ?? m.mediaName ?? '[media]').slice(0, 80)}`,
+   328→      'WHATSAPP'
+   329→    )
+   330→    await emitSocketEvent({
+   331→      room: `user:${ctx.conversation.ownerId}`,
+   332→      event: 'notification',
+   333→      data: { title: 'New WhatsApp message', body: `${conv.phone}: ${(m.body ?? m.mediaName ?? '[media]').slice(0, 80)}`, type: 'WHATSAPP' },
+   334→    })
+   335→  }
+   336→
+   337→  // Automation engine
+   338→  await runAutomations('INBOUND_WHATSAPP', {
+   339→    leadId,
+   340→    conversationId: convId,
+   341→    phone: conv.phone,
+   342→    messageBody: m.body,
+   343→  })
+   344→
+   345→  return {
+   346→    summary: ctx.created ? 'New lead + conversation created; message stored.' : 'Message stored in existing conversation.',
+   347→    leadId: leadId ?? null,
+   348→  }
+   349→}
+   350→
+   351→async function handleStatusEvent(s: NormStatus): Promise<string> {
+   352→  if (!s.waMessageId) return 'Status event without message id — recorded only.'
+   353→  const msg = await db.whatsAppMessage.findFirst({ where: { providerMessageId: s.waMessageId } })
+   354→  if (!msg) return `No CRM message matches provider id ${s.waMessageId}.`
+   355→  const patch: Record<string, unknown> = { status: s.status }
+   356→  if (s.status === 'SENT') patch.sentAt = s.timestamp ?? new Date()
+   357→  if (s.status === 'DELIVERED') patch.deliveredAt = s.timestamp ?? new Date()
+   358→  if (s.status === 'READ') {
+   359→    patch.readAt = s.timestamp ?? new Date()
+   360→    patch.deliveredAt = msg.deliveredAt ?? s.timestamp ?? new Date()
+   361→  }
+   362→  if (s.status === 'FAILED') {
+   363→    patch.failedAt = new Date()
+   364→    patch.errorCode = s.errorCode
+   365→    patch.errorMessage = s.errorMessage ?? 'Message failed at provider'
+   366→  }
+   367→  const updated = await db.whatsAppMessage.update({ where: { id: msg.id }, data: patch })
+   368→  await emitSocketEvent({
+   369→    room: `conversation:${msg.conversationId}`,
+   370→    event: 'whatsapp:status',
+   371→    data: { messageId: msg.id, status: s.status, conversationId: msg.conversationId },
+   372→  })
+   373→  if (s.status === 'FAILED') {
+   374→    await runAutomations('WHATSAPP_FAILED', { leadId: (await db.whatsAppConversation.findUnique({ where: { id: msg.conversationId }, select: { leadId: true } }))?.leadId ?? null, messageId: msg.id })
+   375→  }
+   376→  return `Message ${msg.id} → ${updated.status}.`
+   377→}
+   378→
+   379→// ---------- Voice / SIP ----------
+   380→
+   381→export type VoiceEvent = {
+   382→  callId?: string
+   383→  event: string // ringing | answered | ended | missed | hold | unhold | recording | transfer
+   384→  customerNumber?: string
+   385→  agentNumber?: string
+   386→  agentExtension?: string
+   387→  direction?: 'INCOMING' | 'OUTGOING'
+   388→  durationSec?: number
+   389→  recordingUrl?: string
+   390→  timestamp?: string
+   391→}
+   392→
+   393→/** Normalize common voice/SIP webhook payloads into a VoiceEvent. */
+   394→export function normalizeVoicePayload(payload: Record<string, unknown>): VoiceEvent | null {
+   395→  const ev = (payload.event ?? payload.event_type ?? payload.type ?? payload.status ?? payload.CallStatus) as string | undefined
+   396→  if (!ev) return null
+   397→  const callId = (payload.call_id ?? payload.callId ?? payload.CallSid ?? payload.call_sid ?? payload.uuid ?? payload.id) as string | undefined
+   398→  const customer = (payload.customer_number ?? payload.customerNumber ?? payload.from ?? payload.From ?? payload.caller_number ?? payload.customer) as string | undefined
+   399→  const agent = (payload.agent_number ?? payload.agentNumber ?? payload.to ?? payload.To ?? payload.agent ?? payload.extension) as string | undefined
+   400→  const direction = (payload.direction ?? payload.call_direction) as string | undefined
+   401→  const duration = (payload.duration_sec ?? payload.durationSec ?? payload.duration ?? payload.call_duration) as number | string | undefined
+   402→  const recording = (payload.recording_url ?? payload.recordingUrl ?? payload.RecordingUrl ?? payload.recording) as string | undefined
+   403→  const normEv = String(ev).toLowerCase().replace(/[\s-]+/g, '_')
+   404→  return {
+   405→    callId: callId ? String(callId) : undefined,
+   406→    event: normEv,
+   407→    customerNumber: customer ? String(customer) : undefined,
+   408→    agentNumber: agent ? String(agent) : undefined,
+   409→    agentExtension: (payload.agent_extension ?? payload.agentExtension) as string | undefined,
+   410→    direction: direction ? (String(direction).toUpperCase().includes('IN') ? 'INCOMING' : 'OUTGOING') : undefined,
+   411→    durationSec: duration !== undefined ? Math.max(0, Math.round(Number(duration) || 0)) : undefined,
+   412→    recordingUrl: recording ? String(recording) : undefined,
+   413→    timestamp: (payload.timestamp as string | undefined) ?? undefined,
+   414→  }
+   415→}
+   416→
+   417→/** Process POST /api/webhooks/voice payload. Idempotent. */
+   418→export async function processVoiceWebhook(payload: Record<string, unknown>, ip?: string): Promise<WebhookProcessResult> {
+   419→  await markWebhookReceived()
+   420→  const voice = normalizeVoicePayload(payload)
+   421→  const rawJson = redactSecrets(JSON.stringify(payload))
+   422→  const evName = voice?.event ?? 'unknown'
+   423→
+   424→  const dedupeKey = sha(`voice:${voice?.callId ?? 'nocall'}:${evName}:${voice?.timestamp ?? sha(rawJson)}`)
+   425→  const existing = await db.webhookEvent.findUnique({ where: { dedupeKey } })
+   426→  if (existing && existing.processingStatus === 'PROCESSED') {
+   427→    return { status: 'DUPLICATE', detail: 'Voice event already processed.', eventId: existing.id }
+   428→  }
+   429→
+   430→  const event = existing
+   431→    ? await db.webhookEvent.update({ where: { id: existing.id }, data: { payload: rawJson, ip, processingStatus: 'RECEIVED' } })
+   432→    : await db.webhookEvent.create({
+   433→        data: {
+   434→          dedupeKey,
+   435→          provider: 'VOICE',
+   436→          eventType: 'CALL_EVENT',
+   437→          eventId: voice?.callId,
+   438→          payload: rawJson,
+   439→          processingStatus: 'RECEIVED',
+   440→          ip: ip ?? null,
+   441→        },
+   442→      })
+   443→
+   444→  try {
+   445→    if (!voice) {
+   446→      await db.webhookEvent.update({ where: { id: event.id }, data: { processingStatus: 'UNRECOGNIZED', error: 'No recognizable voice event field', processedAt: new Date() } })
+   447→      return { status: 'UNRECOGNIZED', detail: 'Payload did not contain a voice event type.', eventId: event.id }
+   448→    }
+   449→    const summary = await handleVoiceEvent(voice)
+   450→    await db.webhookEvent.update({
+   451→      where: { id: event.id },
+   452→      data: { processingStatus: 'PROCESSED', processedAt: new Date() },
+   453→    })
+   454→    return { status: 'PROCESSED', detail: summary, eventId: event.id }
+   455→  } catch (e) {
+   456→    const msg = redactSecrets(e instanceof Error ? e.message : String(e)).slice(0, 500)
+   457→    await db.webhookEvent.update({ where: { id: event.id }, data: { processingStatus: 'FAILED', error: msg, processedAt: new Date() } })
+   458→    console.error('[webhook-voice-fail]', e)
+   459→    return { status: 'FAILED', detail: msg, eventId: event.id }
+   460→  }
+   461→}
+   462→
+   463→async function leadInfoFor(leadId: string | null) {
+   464→  if (!leadId) return null
+   465→  const lead = await db.lead.findUnique({
+   466→    where: { id: leadId },
+   467→    select: {
+   468→      id: true, leadCode: true, customerName: true, mobile: true, department: true,
+   469→      source: { select: { label: true } },
+   470→      assignedTo: { select: { id: true, name: true } },
+   471→    },
+   472→  })
+   473→  return lead
+   474→}
+   475→
+   476→async function handleVoiceEvent(v: VoiceEvent): Promise<string> {
+   477→  const now = new Date()
+   478→  const ev = v.event
+   479→  let call = v.callId
+   480→    ? await db.callLog.findFirst({ where: { providerCallId: v.callId } })
+   481→    : null
+   482→
+   483→  // Inbound call that we have not seen before → create call log + popup
+   484→  if (!call && (['incoming', 'inbound', 'ringing', 'offer', 'dial_in'].includes(ev) || v.direction === 'INCOMING')) {
+   485→    const customerNumber = v.customerNumber ?? ''
+   486→    const lead = customerNumber ? await findLeadByPhone(customerNumber) : null
+   487→    const agentUser = v.agentNumber
+   488→      ? await db.user.findFirst({ where: { OR: [{ phone: v.agentNumber }, { sipExtension: v.agentNumber.replace(/\D/g, '') }] } })
+   489→      : null
+   490→    call = await db.callLog.create({
+   491→      data: {
+   492→        leadId: lead?.id ?? null,
+   493→        userId: agentUser?.id ?? null,
+   494→        direction: 'INCOMING',
+   495→        status: 'NOT_CONNECTED',
+   496→        callStatus: 'RINGING',
+   497→        providerCallId: v.callId ?? null,
+   498→        customerNumber: customerNumber || null,
+   499→        agentNumber: v.agentNumber ?? null,
+   500→        channel: 'SIP',
+   501→        startAt: now,
+   502→      },
+   503→    })
+   504→    const leadInfo = await leadInfoFor(lead?.id ?? null)
+   505→    await emitSocketEvent({
+   506→      room: 'call',
+   507→      event: 'call:incoming',
+   508→      data: {
+   509→        callId: call.id,
+   510→        providerCallId: call.providerCallId,
+   511→        customerNumber,
+   512→        known: Boolean(leadInfo),
+   513→        lead: leadInfo,
+   514→        agentExtension: v.agentExtension ?? v.agentNumber ?? null,
+   515→      },
+   516→    })
+   517→    if (lead?.id) {
+   518→      await db.activity.create({ leadId: lead.id, type: 'CALL', title: 'Incoming call ringing', description: `From ${customerNumber}` })
+   519→    }
+   520→    return `Incoming call logged (${call.id})${leadInfo ? ' — matched lead ' + leadInfo.leadCode : ' — NEW CALLER'}.`
+   521→  }
+   522→
+   523→  if (!call) {
+   524→    // Outbound lifecycle events arrive for calls created by click-to-call.
+   525→    // If still unknown, ignore silently (already deduped in WebhookEvent).
+   526→    return `No matching call for provider id ${v.callId ?? 'n/a'} — event recorded.`
+   527→  }
+   528→
+   529→  switch (ev) {
+   530→    case 'ringing':
+   531→    case 'outgoing_ringing':
+   532→    case 'dialing': {
+   533→      await db.callLog.update({ where: { id: call.id }, data: { callStatus: 'RINGING', startAt: call.startAt ?? now } })
+   534→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'RINGING' } })
+   535→      return 'Call ringing.'
+   536→    }
+   537→    case 'answered':
+   538→    case 'answer':
+   539→    case 'connected':
+   540→    case 'in_progress':
+   541→    case 'start': {
+   542→      await db.callLog.update({ where: { id: call.id }, data: { callStatus: 'IN_PROGRESS', answerAt: now, status: 'CONNECTED' } })
+   543→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'IN_PROGRESS', answerAt: now.toISOString() } })
+   544→      return 'Call answered.'
+   545→    }
+   546→    case 'hold': {
+   547→      await db.callLog.update({ where: { id: call.id }, data: { callStatus: 'ON_HOLD' } })
+   548→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'ON_HOLD' } })
+   549→      return 'Call on hold.'
+   550→    }
+   551→    case 'unhold':
+   552→    case 'resume': {
+   553→      await db.callLog.update({ where: { id: call.id }, data: { callStatus: 'IN_PROGRESS' } })
+   554→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'IN_PROGRESS' } })
+   555→      return 'Call resumed.'
+   556→    }
+   557→    case 'transfer': {
+   558→      const to = v.agentExtension ?? v.agentNumber ?? null
+   559→      await db.callLog.update({ where: { id: call.id }, data: { transferedTo: to } })
+   560→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, transferedTo: to } })
+   561→      return `Call transferred to ${to ?? 'unknown'}.`
+   562→    }
+   563→    case 'recording':
+   564→    case 'recording_ready':
+   565→    case 'recording_completed': {
+   566→      if (v.recordingUrl) {
+   567→        await db.callLog.update({ where: { id: call.id }, data: { recordingUrl: v.recordingUrl } })
+   568→        return 'Recording URL stored.'
+   569→      }
+   570→      return 'Recording event without URL.'
+   571→    }
+   572→    case 'ended':
+   573→    case 'completed':
+   574→    case 'hangup':
+   575→    case 'finish': {
+   576→      const answerAt = call.answerAt
+   577→      const duration = v.durationSec ?? (answerAt ? Math.round((now.getTime() - answerAt.getTime()) / 1000) : 0)
+   578→      const connected = duration > 0 || Boolean(answerAt)
+   579→      await db.callLog.update({
+   580→        where: { id: call.id },
+   581→        data: {
+   582→          callStatus: 'COMPLETED',
+   583→          endAt: now,
+   584→          durationSec: duration,
+   585→          status: connected ? 'CONNECTED' : 'NOT_CONNECTED',
+   586→        },
+   587→      })
+   588→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'COMPLETED', durationSec: duration } })
+   589→      if (call.leadId) {
+   590→        const m = Math.floor(duration / 60), s = duration % 60
+   591→        await db.activity.create({
+   592→          leadId: call.leadId,
+   593→          userId: call.userId,
+   594→          type: 'CALL',
+   595→          title: `${call.direction === 'INCOMING' ? 'Incoming' : 'Outgoing'} call completed${duration > 0 ? ` — ${m > 0 ? `${m}m ${s}s` : `${s}s`}` : ''}`,
+   596→        })
+   597→        await db.lead.update({ where: { id: call.leadId }, data: { lastContactAt: now } })
+   598→      }
+   599→      await runAutomations('CALL_COMPLETED', { leadId: call.leadId, callId: call.id, connected })
+   600→      return 'Call completed.'
+   601→    }
+   602→    case 'missed':
+   603→    case 'no_answer':
+   604→    case 'busy':
+   605→    case 'rejected':
+   606→    case 'failed':
+   607→    case 'cancel': {
+   608→      await db.callLog.update({
+   609→        where: { id: call.id },
+   610→        data: { callStatus: 'MISSED', status: 'MISSED', endAt: now },
+   611→      })
+   612→      await emitSocketEvent({ room: 'call', event: 'call:update', data: { callId: call.id, callStatus: 'MISSED' } })
+   613→      if (call.leadId) {
+   614→        await db.activity.create({ leadId: call.leadId, userId: call.userId, type: 'CALL', title: `Call ${ev.replace('_', ' ')} — missed` })
+   615→      }
+   616→      if (['missed', 'no_answer'].includes(ev)) {
+   617→        await runAutomations('CALL_MISSED', { leadId: call.leadId, callId: call.id })
+   618→      }
+   619→      return `Call ${ev}.`
+   620→    }
+   621→    default:
+   622→      return `Unhandled voice event "${ev}" recorded.`
+   623→  }
+   624→}
+   625→

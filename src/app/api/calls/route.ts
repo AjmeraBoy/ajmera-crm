@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { ok, route, requireUser, readBody, ApiError, deptScope, assertDeptAccess } from '@/lib/api'
+import { ok, route, requireUser, readBody, ApiError, deptScope, assertDeptAccess, isManagement } from '@/lib/api'
 import type { SessionUser } from '@/lib/auth'
 
 // ---------- local helpers ----------
@@ -191,4 +191,41 @@ export const POST = route(async (req) => {
     },
   })
   return ok({ call }, 201)
+})
+
+// ---------- PATCH /api/calls { callId, notes?, dispositionId? } ----------
+
+export const PATCH = route(async (req) => {
+  const user = await requireUser()
+  const body = await readBody<{ callId?: string; notes?: string; dispositionId?: string | null }>(req)
+  const callId = str(body.callId)
+  if (!callId) throw new ApiError('callId is required', 400)
+
+  const call = await db.callLog.findUnique({ where: { id: callId } })
+  if (!call) throw new ApiError('Call not found', 404)
+  if (call.userId !== user.id && !isManagement(user)) {
+    throw new ApiError('You can only update your own calls', 403)
+  }
+
+  const data: Record<string, unknown> = {}
+  if (body.notes !== undefined) data.notes = String(body.notes).trim() === '' ? null : String(body.notes)
+  if (body.dispositionId !== undefined) {
+    data.dispositionId = body.dispositionId === null || String(body.dispositionId).trim() === '' ? null : String(body.dispositionId)
+  }
+  if (Object.keys(data).length === 0) throw new ApiError('Nothing to update (send notes and/or dispositionId)', 400)
+
+  const updated = await db.callLog.update({ where: { id: callId }, data, include: callInclude })
+
+  if (body.notes !== undefined && call.leadId) {
+    await db.activity.create({
+      data: {
+        leadId: call.leadId,
+        userId: user.id,
+        type: 'CALL',
+        title: 'Call note added',
+        description: String(body.notes).slice(0, 160) || undefined,
+      },
+    })
+  }
+  return ok({ call: updated })
 })

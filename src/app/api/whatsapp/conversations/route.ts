@@ -48,7 +48,22 @@ export const GET = route(async (req) => {
     take: 1000,
     include: {
       owner: { select: { id: true, name: true } },
-      lead: { select: { id: true, leadCode: true, customerName: true, department: true } },
+      lead: {
+        select: {
+          id: true,
+          leadCode: true,
+          customerName: true,
+          department: true,
+          mobile: true,
+          whatsapp: true,
+          optInStatus: true,
+          waStatus: true,
+          lastWaMessage: true,
+          lastWaMessageAt: true,
+          source: { select: { label: true } },
+          assignedTo: { select: { id: true, name: true } },
+        },
+      },
     },
   })
   return ok({ conversations })

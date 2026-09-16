@@ -1,0 +1,1618 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useState } from 'react'
+     4→import {
+     5→  ArrowLeft,
+     6→  Bot,
+     7→  CalendarClock,
+     8→  Circle,
+     9→  Edit3,
+    10→  File,
+    11→  FileText,
+    12→  GitBranch,
+    13→  IndianRupee,
+    14→  LifeBuoy,
+    15→  Loader2,
+    16→  Megaphone,
+    17→  MessageCircle,
+    18→  Phone,
+    19→  Pin,
+    20→  Plus,
+    21→  ShoppingCart,
+    22→  Sparkles,
+    23→  StickyNote,
+    24→  Tags,
+    25→  Trash2,
+    26→  Truck,
+    27→  UserCog,
+    28→  UserPlus,
+    29→  Video,
+    30→} from 'lucide-react'
+    31→import type { LucideIcon } from 'lucide-react'
+    32→import { Button } from '@/components/ui/button'
+    33→import { Badge } from '@/components/ui/badge'
+    34→import { Input } from '@/components/ui/input'
+    35→import { Label } from '@/components/ui/label'
+    36→import { Textarea } from '@/components/ui/textarea'
+    37→import { Checkbox } from '@/components/ui/checkbox'
+    38→import { Skeleton } from '@/components/ui/skeleton'
+    39→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    40→import {
+    41→  AlertDialog,
+    42→  AlertDialogAction,
+    43→  AlertDialogCancel,
+    44→  AlertDialogContent,
+    45→  AlertDialogDescription,
+    46→  AlertDialogFooter,
+    47→  AlertDialogHeader,
+    48→  AlertDialogTitle,
+    49→} from '@/components/ui/alert-dialog'
+    50→import {
+    51→  Dialog,
+    52→  DialogContent,
+    53→  DialogDescription,
+    54→  DialogFooter,
+    55→  DialogHeader,
+    56→  DialogTitle,
+    57→} from '@/components/ui/dialog'
+    58→import {
+    59→  DropdownMenu,
+    60→  DropdownMenuContent,
+    61→  DropdownMenuItem,
+    62→  DropdownMenuLabel,
+    63→  DropdownMenuSeparator,
+    64→  DropdownMenuTrigger,
+    65→} from '@/components/ui/dropdown-menu'
+    66→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    67→import { useToast } from '@/hooks/use-toast'
+    68→import { api, qs } from '@/lib/client'
+    69→import { formatDateTime, formatDuration, formatINR, timeAgo, toInputDateTime } from '@/lib/format'
+    70→import { cn } from '@/lib/utils'
+    71→import { PAYMENT_MODES, PAYMENT_MODE_LABELS } from '@/lib/constants'
+    72→import { StatusBadge } from '@/components/crm/shared/status-badge'
+    73→import { UserAvatar } from '@/components/crm/shared/avatar'
+    74→import { masterExtra, useMasters } from '@/components/crm/shared/use-masters'
+    75→import { dispositionExtra, useAppStore } from '@/store/app-store'
+    76→import type { MasterItemDTO } from '@/types/crm'
+    77→import LeadFormDialog, { type LeadEditInput } from '@/components/crm/leads/lead-form-dialog'
+    78→
+    79→// ---------- types ----------
+    80→
+    81→type DetailLead = {
+    82→  id: string
+    83→  leadCode: string
+    84→  department: string
+    85→  customerName: string
+    86→  companyName: string | null
+    87→  mobile: string
+    88→  whatsapp: string | null
+    89→  email: string | null
+    90→  city: string | null
+    91→  stateId: string | null
+    92→  state: MasterItemDTO | null
+    93→  countryId: string | null
+    94→  country: MasterItemDTO | null
+    95→  businessTypeId: string | null
+    96→  businessType: MasterItemDTO | null
+    97→  productInterest: string | null
+    98→  requirementNotes: string | null
+    99→  monthlyVolume: number | null
+   100→  budget: number | null
+   101→  sourceId: string | null
+   102→  source: MasterItemDTO | null
+   103→  visitDate: string | null
+   104→  visitTime: string | null
+   105→  assignedToId: string | null
+   106→  assignedTo: { id: string; name: string; role: string; phone: string | null; email: string | null } | null
+   107→  createdBy: { id: string; name: string } | null
+   108→  stageId: string | null
+   109→  stage: MasterItemDTO | null
+   110→  dispositionId: string | null
+   111→  disposition: MasterItemDTO | null
+   112→  subDispositionId: string | null
+   113→  subDisposition: MasterItemDTO | null
+   114→  priority: string | null
+   115→  estimatedValue: number | null
+   116→  notes: string | null
+   117→  lastFollowUpAt: string | null
+   118→  nextFollowUpAt: string | null
+   119→  lastContactAt: string | null
+   120→  isSticky: boolean
+   121→  stickySince: string | null
+   122→  status: string
+   123→  customerType: string | null
+   124→  createdAt: string
+   125→  updatedAt: string
+   126→}
+   127→
+   128→type ActivityRow = { id: string; type: string; title: string; description: string | null; createdAt: string; user: { id: string; name: string } | null }
+   129→type FollowupRow = { id: string; dueAt: string; status: string; note: string | null; outcome: string | null; completedAt: string | null; assignedTo: { id: string; name: string } | null }
+   130→type CallRow = { id: string; direction: string; status: string; durationSec: number; notes: string | null; channel: string; isVideo: boolean; createdAt: string; user: { id: string; name: string } | null }
+   131→type QuoteRow = { id: string; quoteNo: string; subtotal: number; discount: number; total: number; status: string; createdAt: string }
+   132→type ShipmentLite = { id: string; stage: string; courierName: string | null; awbNumber: string | null; trackingUrl: string | null; dispatchedAt: string | null; deliveredAt: string | null }
+   133→type OrderRow = { id: string; orderNo: string; total: number; paidAmount: number; paymentStatus: string; status: string; createdAt: string; shipment: ShipmentLite | null; invoices: { id: string; invoiceNo: string; amount: number; paidAmount: number; status: string }[] }
+   134→type PaymentRow = { id: string; receiptNo: string; amount: number; mode: string; isAdvance: boolean; paidAt: string; notes: string | null }
+   135→type TicketRow = { id: string; ticketNo: string; subject: string; priority: string; status: string; createdAt: string }
+   136→type MeetingRow = { id: string; title: string; scheduledAt: string; link: string | null; outcome: string | null; notes: string | null }
+   137→type DocumentRow = { id: string; name: string; type: string | null; version: number; expiryDate: string | null; url: string | null; createdAt: string }
+   138→
+   139→type LeadBundle = {
+   140→  lead: DetailLead
+   141→  activities: ActivityRow[]
+   142→  followups: FollowupRow[]
+   143→  callLogs: CallRow[]
+   144→  quotations: QuoteRow[]
+   145→  orders: OrderRow[]
+   146→  payments: PaymentRow[]
+   147→  tickets: TicketRow[]
+   148→  meetings: MeetingRow[]
+   149→  documents: DocumentRow[]
+   150→  conversations: { id: string; phone: string; unreadCount: number; lastMessageAt: string | null }[]
+   151→}
+   152→
+   153→type ExecUser = { id: string; name: string; role: string; isActive: boolean }
+   154→type ProductLite = { id: string; name: string; price: number; code: string | null }
+   155→
+   156→const ACTIVITY_ICONS: Record<string, LucideIcon> = {
+   157→  CALL: Phone,
+   158→  WHATSAPP: MessageCircle,
+   159→  NOTE: StickyNote,
+   160→  DISPOSITION: Tags,
+   161→  STAGE: GitBranch,
+   162→  ASSIGNMENT: UserPlus,
+   163→  FOLLOWUP: CalendarClock,
+   164→  QUOTATION: FileText,
+   165→  ORDER: ShoppingCart,
+   166→  PAYMENT: IndianRupee,
+   167→  DISPATCH: Truck,
+   168→  TICKET: LifeBuoy,
+   169→  MEETING: Video,
+   170→  DOCUMENT: File,
+   171→  LEAD: Sparkles,
+   172→  AI_CALL: Bot,
+   173→  BROADCAST: Megaphone,
+   174→}
+   175→
+   176→const DOCUMENT_TYPES = ['QUOTATION', 'INVOICE', 'PACKING_LIST', 'SHIPPING', 'PRODUCT_PDF', 'AGREEMENT', 'OTHER']
+   177→const COMPLETE_OUTCOMES = ['Interested', 'Not Interested', 'Callback Booked', 'No Response']
+   178→const MANAGEMENT_ROLES = ['TEAM_LEADER', 'MANAGER', 'ADMIN', 'SUPER_ADMIN']
+   179→
+   180→// ---------- component ----------
+   181→
+   182→export default function LeadDetail({ leadId }: { leadId?: string }) {
+   183→  const storeLeadId = useAppStore((s) => (s.params as { leadId?: string }).leadId)
+   184→  const setView = useAppStore((s) => s.setView)
+   185→  const user = useAppStore((s) => s.user)
+   186→  const { toast } = useToast()
+   187→  const masters = useMasters()
+   188→
+   189→  const id = leadId || storeLeadId || ''
+   190→  const isManagement = MANAGEMENT_ROLES.includes(user?.role ?? '')
+   191→  const canRecordPayment = isManagement || user?.role === 'ACCOUNTS' || user?.role === 'EXECUTIVE'
+   192→
+   193→  const [bundle, setBundle] = useState<LeadBundle | null>(null)
+   194→  const [loading, setLoading] = useState(true)
+   195→  const [pending, setPending] = useState<string | null>(null)
+   196→  const [tab, setTab] = useState('timeline')
+   197→  const [reloadKey, setReloadKey] = useState(0)
+   198→
+   199→  // note dialog
+   200→  const [noteOpen, setNoteOpen] = useState(false)
+   201→  const [noteText, setNoteText] = useState('')
+   202→  // reassign dialog
+   203→  const [reassignOpen, setReassignOpen] = useState(false)
+   204→  const [reassignTarget, setReassignTarget] = useState('')
+   205→  const [execs, setExecs] = useState<ExecUser[]>([])
+   206→  // edit form
+   207→  const [formOpen, setFormOpen] = useState(false)
+   208→  // stage backward-move confirmation
+   209→  const [backStage, setBackStage] = useState<MasterItemDTO | null>(null)
+   210→
+   211→  // disposition form
+   212→  const [dispId, setDispId] = useState('')
+   213→  const [subId, setSubId] = useState('')
+   214→  const [callbackAt, setCallbackAt] = useState('')
+   215→  const [followUpAt, setFollowUpAt] = useState('')
+   216→  const [estValue, setEstValue] = useState('')
+   217→  const [payAmount, setPayAmount] = useState('')
+   218→  const [payMode, setPayMode] = useState('UPI')
+   219→  const [dispNote, setDispNote] = useState('')
+   220→
+   221→  // follow-up schedule (inline) + reschedule dialog
+   222→  const [fuDue, setFuDue] = useState('')
+   223→  const [fuNote, setFuNote] = useState('')
+   224→  const [reschedFollowup, setReschedFollowup] = useState<FollowupRow | null>(null)
+   225→  const [reschedTo, setReschedTo] = useState('')
+   226→
+   227→  // quotation quick create
+   228→  const [products, setProducts] = useState<ProductLite[]>([])
+   229→  const [productsLoaded, setProductsLoaded] = useState(false)
+   230→  const [quoteRows, setQuoteRows] = useState<{ productId: string; qty: string }[]>([{ productId: '', qty: '1' }])
+   231→  const [quoteDiscount, setQuoteDiscount] = useState('')
+   232→
+   233→  // payment dialog
+   234→  const [payOpen, setPayOpen] = useState(false)
+   235→  const [payInput, setPayInput] = useState('')
+   236→  const [payModeInput, setPayModeInput] = useState('BANK_TRANSFER')
+   237→  const [payAdvance, setPayAdvance] = useState(false)
+   238→  const [payNotes, setPayNotes] = useState('')
+   239→
+   240→  // ticket dialog
+   241→  const [ticketOpen, setTicketOpen] = useState(false)
+   242→  const [ticketType, setTicketType] = useState('')
+   243→  const [ticketPriority, setTicketPriority] = useState('MEDIUM')
+   244→  const [ticketSubject, setTicketSubject] = useState('')
+   245→  const [ticketDesc, setTicketDesc] = useState('')
+   246→
+   247→  // meeting dialog
+   248→  const [meetOpen, setMeetOpen] = useState(false)
+   249→  const [meetTitle, setMeetTitle] = useState('')
+   250→  const [meetAt, setMeetAt] = useState('')
+   251→  const [meetLink, setMeetLink] = useState('')
+   252→
+   253→  // document dialog
+   254→  const [docOpen, setDocOpen] = useState(false)
+   255→  const [docName, setDocName] = useState('')
+   256→  const [docType, setDocType] = useState('OTHER')
+   257→  const [docUrl, setDocUrl] = useState('')
+   258→
+   259→  const lead = bundle?.lead
+   260→
+   261→  const load = useCallback(async () => {
+   262→    if (!id) return
+   263→    setLoading(true)
+   264→    try {
+   265→      const res = await api<LeadBundle>(`/api/leads/detail${qs({ id })}`)
+   266→      setBundle(res)
+   267→    } catch (e) {
+   268→      toast({ title: 'Failed to load lead', description: (e as Error).message, variant: 'destructive' })
+   269→    } finally {
+   270→      setLoading(false)
+   271→    }
+   272→  }, [id, toast])
+   273→
+   274→  useEffect(() => {
+   275→    load()
+   276→  }, [load, reloadKey])
+   277→
+   278→  // executives for reassign
+   279→  useEffect(() => {
+   280→    if (!isManagement) return
+   281→    api<{ users: ExecUser[] }>(`/api/users${qs({ role: 'EXECUTIVE', active: 1, dept: lead?.department || undefined })}`)
+   282→      .then((res) => setExecs(res.users ?? []))
+   283→      .catch(() => setExecs([]))
+   284→  }, [isManagement, lead?.department])
+   285→
+   286→  // prefill disposition form whenever lead changes
+   287→  useEffect(() => {
+   288→    if (!lead) return
+   289→    setDispId(lead.dispositionId ?? '')
+   290→    setSubId(lead.subDispositionId ?? '')
+   291→    setCallbackAt('')
+   292→    setFollowUpAt('')
+   293→    setEstValue('')
+   294→    setPayAmount('')
+   295→    setPayMode('UPI')
+   296→    setDispNote('')
+   297→  }, [lead?.id, lead?.dispositionId, lead?.subDispositionId, lead])
+   298→
+   299→  // lazy-load products when quotations tab opens
+   300→  useEffect(() => {
+   301→    if (tab !== 'quotations' || productsLoaded || !id) return
+   302→    setProductsLoaded(true)
+   303→    api<{ products: ProductLite[] }>(`/api/products${qs({ active: 1, pageSize: 100 })}`)
+   304→      .then((res) => setProducts(res.products ?? []))
+   305→      .catch(() => toast({ title: 'Failed to load products', variant: 'destructive' }))
+   306→  }, [tab, productsLoaded, id, toast])
+   307→
+   308→  const dept = lead?.department ?? ''
+   309→  const stages = useMemo(() => masters.items('pipeline_stage', dept || undefined), [masters, dept])
+   310→  const dispositionOptions = useMemo(() => masters.items('disposition', dept || undefined), [masters, dept])
+   311→  const subOptions = useMemo(() => (dispId ? masters.subItems(dispId, dept || undefined) : []), [masters, dispId, dept])
+   312→  const dispExtra = useMemo(() => dispositionExtra(masters.byId(dispId)?.extra), [masters, dispId])
+   313→  const ticketTypeOptions = useMemo(() => masters.items('ticket_type').map((m) => ({ id: m.id, label: m.label })), [masters])
+   314→
+   315→  const isOverdue = (d: string | null) => Boolean(d && new Date(d).getTime() < Date.now())
+   316→
+   317→  // ---------- mutations ----------
+   318→
+   319→  const runMutation = async (key: string, fn: () => Promise<LeadBundle | void>, success: string) => {
+   320→    setPending(key)
+   321→    try {
+   322→      const res = await fn()
+   323→      if (res && typeof res === 'object' && 'lead' in res) setBundle(res as LeadBundle)
+   324→      else setReloadKey((k) => k + 1)
+   325→      toast({ title: success })
+   326→      return true
+   327→    } catch (e) {
+   328→      toast({ title: 'Action failed', description: (e as Error).message, variant: 'destructive' })
+   329→      return false
+   330→    } finally {
+   331→      setPending(null)
+   332→    }
+   333→  }
+   334→
+   335→  const moveStage = async (stage: MasterItemDTO) => {
+   336→    if (!lead || stage.id === lead.stageId) return
+   337→    const currentIdx = stages.findIndex((s) => s.id === lead.stageId)
+   338→    const nextIdx = stages.findIndex((s) => s.id === stage.id)
+   339→    if (currentIdx >= 0 && nextIdx >= 0 && nextIdx < currentIdx) {
+   340→      setBackStage(stage)
+   341→      return
+   342→    }
+   343→    await doStageMove(stage)
+   344→  }
+   345→
+   346→  const doStageMove = async (stage: MasterItemDTO) => {
+   347→    if (!lead) return
+   348→    await runMutation(
+   349→      'stage',
+   350→      () => api<LeadBundle>('/api/leads', { method: 'PATCH', body: { id: lead.id, stageId: stage.id } }),
+   351→      `Stage updated — ${stage.label}`
+   352→    )
+   353→  }
+   354→
+   355→  const submitDisposition = async () => {
+   356→    if (!lead) return
+   357→    if (!dispId) {
+   358→      toast({ title: 'Select a disposition first', variant: 'destructive' })
+   359→      return
+   360→    }
+   361→    if (dispExtra.showCallback && !callbackAt) {
+   362→      toast({ title: 'Next Callback Date & Time is required', variant: 'destructive' })
+   363→      return
+   364→    }
+   365→    if (dispExtra.showFollowUp && !followUpAt) {
+   366→      toast({ title: 'Follow-up Date & Time is required', variant: 'destructive' })
+   367→      return
+   368→    }
+   369→    await runMutation(
+   370→      'disposition',
+   371→      () =>
+   372→        api<LeadBundle>('/api/leads', {
+   373→          method: 'PATCH',
+   374→          body: {
+   375→            id: lead.id,
+   376→            dispositionUpdate: {
+   377→              dispositionId: dispId,
+   378→              subDispositionId: subId || undefined,
+   379→              callbackAt: dispExtra.showCallback ? callbackAt : undefined,
+   380→              followUpAt: dispExtra.showFollowUp ? followUpAt : undefined,
+   381→              estimatedValue: dispExtra.showEstimated && estValue ? Number(estValue) : undefined,
+   382→              paymentAmount: dispExtra.showPayment && payAmount ? Number(payAmount) : undefined,
+   383→              mode: dispExtra.showPayment ? payMode : undefined,
+   384→              note: dispNote || undefined,
+   385→            },
+   386→          },
+   387→        }),
+   388→      'Disposition updated'
+   389→    )
+   390→  }
+   391→
+   392→  const addNote = async () => {
+   393→    if (!lead || !noteText.trim()) {
+   394→      toast({ title: 'Note cannot be empty', variant: 'destructive' })
+   395→      return
+   396→    }
+   397→    const okDone = await runMutation(
+   398→      'note',
+   399→      () => api('/api/leads/note', { method: 'POST', body: { leadId: lead.id, note: noteText.trim() } }),
+   400→      'Note added'
+   401→    )
+   402→    if (okDone) {
+   403→      setNoteText('')
+   404→      setNoteOpen(false)
+   405→    }
+   406→  }
+   407→
+   408→  const submitReassign = async () => {
+   409→    if (!lead || !reassignTarget) {
+   410→      toast({ title: 'Select an executive', variant: 'destructive' })
+   411→      return
+   412→    }
+   413→    const okDone = await runMutation(
+   414→      'reassign',
+   415→      () => api('/api/leads/assign', { method: 'POST', body: { leadIds: [lead.id], assignedToId: reassignTarget } }),
+   416→      'Lead reassigned'
+   417→    )
+   418→    if (okDone) setReassignOpen(false)
+   419→  }
+   420→
+   421→  const scheduleFollowup = async () => {
+   422→    if (!lead) return
+   423→    if (!fuDue) {
+   424→      toast({ title: 'Pick a date & time', variant: 'destructive' })
+   425→      return
+   426→    }
+   427→    const okDone = await runMutation(
+   428→      'followup',
+   429→      () => api('/api/followups', { method: 'POST', body: { leadId: lead.id, dueAt: new Date(fuDue).toISOString(), note: fuNote || undefined } }),
+   430→      'Follow-up scheduled'
+   431→    )
+   432→    if (okDone) {
+   433→      setFuDue('')
+   434→      setFuNote('')
+   435→    }
+   436→  }
+   437→
+   438→  const completeFollowup = async (fu: FollowupRow, outcome?: string) => {
+   439→    await runMutation(
+   440→      'complete',
+   441→      () => api('/api/followups', { method: 'PATCH', body: { id: fu.id, status: 'COMPLETED', outcome: outcome ?? fu.outcome ?? undefined } }),
+   442→      'Follow-up completed'
+   443→    )
+   444→  }
+   445→
+   446→  const submitReschedule = async () => {
+   447→    if (!reschedFollowup || !reschedTo) {
+   448→      toast({ title: 'Pick a new date & time', variant: 'destructive' })
+   449→      return
+   450→    }
+   451→    const okDone = await runMutation(
+   452→      'resched',
+   453→      () =>
+   454→        api('/api/followups', {
+   455→          method: 'PATCH',
+   456→          body: { id: reschedFollowup.id, status: 'RESCHEDULED', rescheduleTo: new Date(reschedTo).toISOString() },
+   457→        }),
+   458→      'Follow-up rescheduled'
+   459→    )
+   460→    if (okDone) setReschedFollowup(null)
+   461→  }
+   462→
+   463→  const logIncomingCall = async () => {
+   464→    if (!lead) return
+   465→    await runMutation(
+   466→      'call',
+   467→      () => api('/api/calls', { method: 'POST', body: { leadId: lead.id, direction: 'INCOMING', status: 'CONNECTED', durationSec: 0 } }),
+   468→      'Incoming call logged'
+   469→    )
+   470→  }
+   471→
+   472→  const submitQuotation = async () => {
+   473→    if (!lead) return
+   474→    const items = quoteRows
+   475→      .filter((r) => r.productId)
+   476→      .map((r) => {
+   477→        const p = products.find((x) => x.id === r.productId)
+   478→        return { productId: r.productId, name: p?.name ?? 'Item', qty: Math.max(1, Number(r.qty) || 1), price: p?.price ?? 0 }
+   479→      })
+   480→    if (items.length === 0) {
+   481→      toast({ title: 'Add at least one product', variant: 'destructive' })
+   482→      return
+   483→    }
+   484→    const okDone = await runMutation(
+   485→      'quote',
+   486→      () => api('/api/quotations', { method: 'POST', body: { leadId: lead.id, items, discount: quoteDiscount ? Number(quoteDiscount) : undefined } }),
+   487→      'Quotation created'
+   488→    )
+   489→    if (okDone) {
+   490→      setQuoteRows([{ productId: '', qty: '1' }])
+   491→      setQuoteDiscount('')
+   492→    }
+   493→  }
+   494→
+   495→  const submitPayment = async () => {
+   496→    if (!lead) return
+   497→    if (!payInput || Number(payInput) <= 0) {
+   498→      toast({ title: 'Enter a valid amount', variant: 'destructive' })
+   499→      return
+   500→    }
+   501→    const okDone = await runMutation(
+   502→      'pay',
+   503→      () =>
+   504→        api('/api/payments', {
+   505→          method: 'POST',
+   506→          body: {
+   507→            leadId: lead.id,
+   508→            amount: Math.round(Number(payInput)),
+   509→            mode: payModeInput,
+   510→            isAdvance: payAdvance,
+   511→            notes: payNotes || undefined,
+   512→          },
+   513→        }),
+   514→      'Payment recorded'
+   515→    )
+   516→    if (okDone) {
+   517→      setPayOpen(false)
+   518→      setPayInput('')
+   519→      setPayNotes('')
+   520→      setPayAdvance(false)
+   521→    }
+   522→  }
+   523→
+   524→  const submitTicket = async () => {
+   525→    if (!lead) return
+   526→    if (!ticketSubject.trim()) {
+   527→      toast({ title: 'Subject is required', variant: 'destructive' })
+   528→      return
+   529→    }
+   530→    const okDone = await runMutation(
+   531→      'ticket',
+   532→      () =>
+   533→        api('/api/tickets', {
+   534→          method: 'POST',
+   535→          body: { leadId: lead.id, type: ticketType || 'Other', priority: ticketPriority, subject: ticketSubject.trim(), description: ticketDesc || undefined },
+   536→        }),
+   537→      'Ticket created'
+   538→    )
+   539→    if (okDone) {
+   540→      setTicketOpen(false)
+   541→      setTicketSubject('')
+   542→      setTicketDesc('')
+   543→    }
+   544→  }
+   545→
+   546→  const submitMeeting = async () => {
+   547→    if (!lead) return
+   548→    if (!meetTitle.trim() || !meetAt) {
+   549→      toast({ title: 'Title and date/time are required', variant: 'destructive' })
+   550→      return
+   551→    }
+   552→    const okDone = await runMutation(
+   553→      'meet',
+   554→      () => api('/api/meetings', { method: 'POST', body: { leadId: lead.id, title: meetTitle.trim(), scheduledAt: new Date(meetAt).toISOString(), link: meetLink || undefined } }),
+   555→      'Video meeting scheduled'
+   556→    )
+   557→    if (okDone) {
+   558→      setMeetOpen(false)
+   559→      setMeetTitle('')
+   560→      setMeetAt('')
+   561→      setMeetLink('')
+   562→    }
+   563→  }
+   564→
+   565→  const submitDocument = async () => {
+   566→    if (!lead) return
+   567→    if (!docName.trim()) {
+   568→      toast({ title: 'Document name is required', variant: 'destructive' })
+   569→      return
+   570→    }
+   571→    const okDone = await runMutation(
+   572→      'doc',
+   573→      () => api('/api/documents', { method: 'POST', body: { leadId: lead.id, name: docName.trim(), type: docType, url: docUrl || undefined } }),
+   574→      'Document added'
+   575→    )
+   576→    if (okDone) {
+   577→      setDocOpen(false)
+   578→      setDocName('')
+   579→      setDocUrl('')
+   580→    }
+   581→  }
+   582→
+   583→  const triggerAiReminder = async () => {
+   584→    if (!lead) return
+   585→    setPending('remind')
+   586→    try {
+   587→      const res = await api<{ ok: boolean; outcome: string }>('/api/visits/remind', { method: 'POST', body: { leadId: lead.id } })
+   588→      toast({ title: 'AI Reminder Call placed', description: `Outcome: ${res.outcome}` })
+   589→      setReloadKey((k) => k + 1)
+   590→    } catch (e) {
+   591→      toast({ title: 'AI reminder failed', description: (e as Error).message, variant: 'destructive' })
+   592→    } finally {
+   593→      setPending(null)
+   594→    }
+   595→  }
+   596→
+   597→  // ---------- derived ----------
+   598→  const leadForForm: LeadEditInput | null = lead
+   599→    ? {
+   600→        id: lead.id,
+   601→        leadCode: lead.leadCode,
+   602→        department: lead.department,
+   603→        customerName: lead.customerName,
+   604→        companyName: lead.companyName,
+   605→        mobile: lead.mobile,
+   606→        whatsapp: lead.whatsapp,
+   607→        email: lead.email,
+   608→        city: lead.city,
+   609→        stateId: lead.stateId,
+   610→        countryId: lead.countryId,
+   611→        businessTypeId: lead.businessTypeId,
+   612→        productInterest: lead.productInterest,
+   613→        requirementNotes: lead.requirementNotes,
+   614→        monthlyVolume: lead.monthlyVolume,
+   615→        budget: lead.budget,
+   616→        sourceId: lead.sourceId,
+   617→        visitDate: lead.visitDate,
+   618→        visitTime: lead.visitTime,
+   619→        priority: lead.priority,
+   620→        notes: lead.notes,
+   621→        stageId: lead.stageId,
+   622→        disposition: lead.disposition ? { id: lead.disposition.id, label: lead.disposition.label } : null,
+   623→        subDisposition: lead.subDisposition ? { id: lead.subDisposition.id, label: lead.subDisposition.label } : null,
+   624→      }
+   625→    : null
+   626→
+   627→  const quoteTotalPreview = quoteRows.reduce((sum, r) => {
+   628→    const p = products.find((x) => x.id === r.productId)
+   629→    return sum + (p ? p.price * (Number(r.qty) || 0) : 0)
+   630→  }, 0) - (Number(quoteDiscount) || 0)
+   631→
+   632→  // ---------- loading skeleton ----------
+   633→  if (loading && !bundle) {
+   634→    return (
+   635→      <div className="space-y-4">
+   636→        <Skeleton className="h-9 w-40" />
+   637→        <Skeleton className="h-32 w-full rounded-xl" />
+   638→        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+   639→          <div className="space-y-4 lg:col-span-2">
+   640→            <Skeleton className="h-20 w-full rounded-xl" />
+   641→            <Skeleton className="h-96 w-full rounded-xl" />
+   642→          </div>
+   643→          <Skeleton className="h-[420px] w-full rounded-xl" />
+   644→        </div>
+   645→      </div>
+   646→    )
+   647→  }
+   648→
+   649→  if (!lead) {
+   650→    return (
+   651→      <div className="rounded-xl border border-stone-200 bg-white p-10 text-center text-sm text-stone-500 shadow-sm">
+   652→        Lead not found or you do not have access to it.
+   653→      </div>
+   654→    )
+   655→  }
+   656→
+   657→  const stageColor = String(masterExtra(lead.stage?.extra).color ?? '')
+   658→  const locationLabel =
+   659→    lead.department === 'EXPORT'
+   660→      ? lead.country?.label ?? '—'
+   661→      : [lead.city, lead.state?.label].filter(Boolean).join(', ') || '—'
+   662→
+   663→  return (
+   664→    <div className="space-y-4">
+   665→      <Button variant="ghost" size="sm" onClick={() => setView('leads')} aria-label="Back to leads list">
+   666→        <ArrowLeft className="h-4 w-4" aria-hidden /> Back to Leads
+   667→      </Button>
+   668→
+   669→      {/* header card */}
+   670→      <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm md:p-5">
+   671→        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+   672→          <div className="min-w-0">
+   673→            <div className="flex flex-wrap items-center gap-2">
+   674→              <span className="font-mono text-sm font-bold text-stone-800">{lead.leadCode}</span>
+   675→              <StatusBadge status={lead.department} variant="dept" />
+   676→              {lead.stage ? (
+   677→                <Badge variant="outline" className="gap-1.5 border-stone-200 font-medium text-stone-700">
+   678→                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stageColor || '#a8a29e' }} aria-hidden />
+   679→                  {lead.stage.label}
+   680→                </Badge>
+   681→              ) : null}
+   682→              <StatusBadge status={lead.status} variant="leadStatus" />
+   683→              <StatusBadge status={lead.priority} variant="priority" />
+   684→              {lead.isSticky ? (
+   685→                <Badge variant="outline" className="gap-1 border-amber-200 bg-amber-50 text-amber-700">
+   686→                  <Pin className="h-3 w-3" aria-hidden /> Sticky Owner: {lead.assignedTo?.name ?? '—'}
+   687→                </Badge>
+   688→              ) : null}
+   689→            </div>
+   690→            <h2 className="mt-2 text-lg font-semibold text-stone-900 md:text-xl">
+   691→              {lead.customerName}
+   692→              {lead.companyName ? <span className="ml-2 text-sm font-normal text-stone-500">{lead.companyName}</span> : null}
+   693→            </h2>
+   694→            <p className="mt-1 text-sm text-stone-500">
+   695→              {lead.mobile}
+   696→              {lead.whatsapp && lead.whatsapp !== lead.mobile ? ` · WA ${lead.whatsapp}` : ''}
+   697→              {lead.email ? ` · ${lead.email}` : ''} · Created {timeAgo(lead.createdAt)}
+   698→              {lead.createdBy ? ` by ${lead.createdBy.name}` : ''}
+   699→            </p>
+   700→          </div>
+   701→          <div className="flex flex-wrap items-center gap-2">
+   702→            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setView('dialer', { leadId: lead.id })}>
+   703→              <Phone className="h-4 w-4" aria-hidden /> <span className="ml-1">Call</span>
+   704→            </Button>
+   705→            <Button size="sm" variant="outline" onClick={() => setView('whatsapp', { leadId: lead.id })}>
+   706→              <MessageCircle className="h-4 w-4" aria-hidden /> <span className="ml-1">WhatsApp</span>
+   707→            </Button>
+   708→            <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
+   709→              <Edit3 className="h-4 w-4" aria-hidden /> <span className="ml-1">Edit</span>
+   710→            </Button>
+   711→            <Button size="sm" variant="outline" onClick={() => setNoteOpen(true)}>
+   712→              <StickyNote className="h-4 w-4" aria-hidden /> <span className="ml-1">Add Note</span>
+   713→            </Button>
+   714→            {isManagement ? (
+   715→              <Button size="sm" variant="outline" onClick={() => { setReassignTarget(lead.assignedTo?.id ?? ''); setReassignOpen(true) }}>
+   716→                <UserCog className="h-4 w-4" aria-hidden /> <span className="ml-1">Reassign</span>
+   717→              </Button>
+   718→            ) : null}
+   719→          </div>
+   720→        </div>
+   721→      </div>
+   722→
+   723→      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+   724→        {/* left column */}
+   725→        <div className="space-y-4 lg:col-span-2">
+   726→          {/* quick stats */}
+   727→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+   728→            {[
+   729→              { label: 'Estimated Value', value: lead.estimatedValue ? formatINR(lead.estimatedValue) : '—' },
+   730→              { label: 'Budget', value: lead.budget ? formatINR(lead.budget) : '—' },
+   731→              { label: 'Last Contact', value: lead.lastContactAt ? timeAgo(lead.lastContactAt) : '—' },
+   732→              {
+   733→                label: 'Next Follow-up',
+   734→                value: lead.nextFollowUpAt ? formatDateTime(lead.nextFollowUpAt) : '—',
+   735→                danger: isOverdue(lead.nextFollowUpAt),
+   736→              },
+   737→              { label: 'Source', value: lead.source?.label ?? '—' },
+   738→              { label: lead.department === 'EXPORT' ? 'Country' : 'State / City', value: locationLabel },
+   739→            ].map((s) => (
+   740→              <div key={s.label} className="rounded-xl border border-stone-200 bg-white p-3 shadow-sm">
+   741→                <p className="text-xs font-medium uppercase tracking-wide text-stone-500">{s.label}</p>
+   742→                <p className={cn('mt-1 truncate text-sm font-semibold', s.danger ? 'text-rose-600' : 'text-stone-900')} title={typeof s.value === 'string' ? s.value : undefined}>
+   743→                  {s.value}
+   744→                </p>
+   745→              </div>
+   746→            ))}
+   747→          </div>
+   748→
+   749→          {/* stage stepper */}
+   750→          <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   751→            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+   752→              <GitBranch className="h-3.5 w-3.5" aria-hidden /> Pipeline Stage
+   753→            </p>
+   754→            <div className="flex gap-2 overflow-x-auto pb-1">
+   755→              {stages.map((s) => {
+   756→                const active = s.id === lead.stageId
+   757→                const c = String(masterExtra(s.extra).color ?? '')
+   758→                return (
+   759→                  <button
+   760→                    key={s.id}
+   761→                    type="button"
+   762→                    disabled={pending === 'stage'}
+   763→                    onClick={() => moveStage(s)}
+   764→                    className={cn(
+   765→                      'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+   766→                      active ? 'border-transparent text-white' : 'border-stone-200 bg-white text-stone-600 hover:border-emerald-400 hover:text-emerald-700'
+   767→                    )}
+   768→                    style={active ? { backgroundColor: c || '#059669' } : undefined}
+   769→                    aria-pressed={active}
+   770→                  >
+   771→                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: active ? 'rgba(255,255,255,0.85)' : c || '#a8a29e' }} aria-hidden />
+   772→                    {s.label}
+   773→                  </button>
+   774→                )
+   775→              })}
+   776→            </div>
+   777→            <p className="mt-1.5 text-xs text-stone-400">Click a stage to move this lead. Backward moves ask for confirmation.</p>
+   778→          </div>
+   779→
+   780→          {/* tabs */}
+   781→          <Tabs value={tab} onValueChange={setTab}>
+   782→            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 bg-stone-100">
+   783→              {['timeline', 'followups', 'calls', 'whatsapp', 'quotations', 'orders', 'dispatch', 'tickets', 'meetings', 'documents'].map((t) => (
+   784→                <TabsTrigger key={t} value={t} className="capitalize">
+   785→                  {t}
+   786→                </TabsTrigger>
+   787→              ))}
+   788→            </TabsList>
+   789→
+   790→            {/* TIMELINE */}
+   791→            <TabsContent value="timeline">
+   792→              <div className="max-h-[520px] space-y-3 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   793→                {bundle && bundle.activities.length > 0 ? (
+   794→                  bundle.activities.map((a) => {
+   795→                    const Icon = ACTIVITY_ICONS[a.type] ?? Circle
+   796→                    return (
+   797→                      <div key={a.id} className="flex gap-3">
+   798→                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+   799→                          <Icon className="h-4 w-4" aria-hidden />
+   800→                        </div>
+   801→                        <div className="min-w-0 flex-1 border-b border-stone-100 pb-3 last:border-0">
+   802→                          <div className="flex flex-wrap items-baseline justify-between gap-1">
+   803→                            <p className="text-sm font-medium text-stone-800">{a.title}</p>
+   804→                            <p className="text-xs text-stone-400">{timeAgo(a.createdAt)}</p>
+   805→                          </div>
+   806→                          {a.description ? <p className="mt-0.5 whitespace-pre-line text-xs text-stone-500">{a.description}</p> : null}
+   807→                          {a.user ? <p className="mt-0.5 text-xs text-stone-400">— {a.user.name}</p> : null}
+   808→                        </div>
+   809→                      </div>
+   810→                    )
+   811→                  })
+   812→                ) : (
+   813→                  <p className="py-6 text-center text-sm text-stone-400">No activity yet — calls, notes and stage moves will appear here.</p>
+   814→                )}
+   815→              </div>
+   816→            </TabsContent>
+   817→
+   818→            {/* FOLLOW-UPS */}
+   819→            <TabsContent value="followups">
+   820→              <div className="space-y-3">
+   821→                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   822→                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+   823→                    <CalendarClock className="h-3.5 w-3.5" aria-hidden /> Schedule Follow-up
+   824→                  </p>
+   825→                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+   826→                    <div className="flex-1 space-y-1">
+   827→                      <Label htmlFor="fu-due">Date & Time</Label>
+   828→                      <Input id="fu-due" type="datetime-local" value={fuDue} onChange={(e) => setFuDue(e.target.value)} />
+   829→                    </div>
+   830→                    <div className="flex-1 space-y-1">
+   831→                      <Label htmlFor="fu-note">Note</Label>
+   832→                      <Input id="fu-note" value={fuNote} onChange={(e) => setFuNote(e.target.value)} placeholder="What to discuss?" />
+   833→                    </div>
+   834→                    <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'followup'} onClick={scheduleFollowup}>
+   835→                      {pending === 'followup' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   836→                      Schedule
+   837→                    </Button>
+   838→                  </div>
+   839→                </div>
+   840→                <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   841→                  {bundle && bundle.followups.length > 0 ? (
+   842→                    bundle.followups.map((f) => (
+   843→                      <div key={f.id} className="flex flex-col gap-2 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+   844→                        <div className="min-w-0">
+   845→                          <div className={cn('text-sm font-medium', f.status === 'PENDING' && isOverdue(f.dueAt) ? 'text-rose-600' : 'text-stone-800')}>
+   846→                            {formatDateTime(f.dueAt)}
+   847→                            <StatusBadge status={f.status} variant="followup" className="ml-2" />
+   848→                          </div>
+   849→                          {f.note ? <p className="truncate text-xs text-stone-500">{f.note}</p> : null}
+   850→                          {f.assignedTo ? <p className="text-xs text-stone-400">Owner: {f.assignedTo.name}</p> : null}
+   851→                        </div>
+   852→                        {f.status === 'PENDING' ? (
+   853→                          <div className="flex shrink-0 gap-2">
+   854→                            <DropdownMenu>
+   855→                              <DropdownMenuTrigger asChild>
+   856→                                <Button size="sm" variant="outline" disabled={pending !== null} aria-label={`Complete follow-up due ${formatDateTime(f.dueAt)}`}>
+   857→                                  Complete
+   858→                                </Button>
+   859→                              </DropdownMenuTrigger>
+   860→                              <DropdownMenuContent align="end">
+   861→                                <DropdownMenuLabel>Outcome</DropdownMenuLabel>
+   862→                                <DropdownMenuSeparator />
+   863→                                {COMPLETE_OUTCOMES.map((o) => (
+   864→                                  <DropdownMenuItem key={o} onClick={() => completeFollowup(f, o)}>
+   865→                                    {o}
+   866→                                  </DropdownMenuItem>
+   867→                                ))}
+   868→                                <DropdownMenuSeparator />
+   869→                                <DropdownMenuItem onClick={() => completeFollowup(f)}>Mark complete</DropdownMenuItem>
+   870→                              </DropdownMenuContent>
+   871→                            </DropdownMenu>
+   872→                            <Button size="sm" variant="ghost" disabled={pending !== null} onClick={() => { setReschedFollowup(f); setReschedTo(toInputDateTime(f.dueAt)) }}>
+   873→                              Reschedule
+   874→                            </Button>
+   875→                          </div>
+   876→                        ) : null}
+   877→                      </div>
+   878→                    ))
+   879→                  ) : (
+   880→                    <p className="py-6 text-center text-sm text-stone-400">No follow-ups scheduled yet.</p>
+   881→                  )}
+   882→                </div>
+   883→              </div>
+   884→            </TabsContent>
+   885→
+   886→            {/* CALLS */}
+   887→            <TabsContent value="calls">
+   888→              <div className="space-y-3">
+   889→                <div className="flex justify-end">
+   890→                  <Button size="sm" variant="outline" disabled={pending === 'call'} onClick={logIncomingCall}>
+   891→                    <Phone className="h-4 w-4" aria-hidden /> <span className="ml-1">Log Incoming Call</span>
+   892→                  </Button>
+   893→                </div>
+   894→                <div className="max-h-[460px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   895→                  {bundle && bundle.callLogs.length > 0 ? (
+   896→                    bundle.callLogs.map((c) => (
+   897→                      <div key={c.id} className="flex flex-col gap-2 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+   898→                        <div className="min-w-0">
+   899→                          <div className="flex flex-wrap items-center gap-1.5">
+   900→                            <StatusBadge status={c.direction} variant="direction" />
+   901→                            <StatusBadge status={c.status} variant="call" />
+   902→                            {c.channel !== 'CRM' ? <Badge variant="outline" className="text-[10px]">{c.channel}</Badge> : null}
+   903→                            <span className="text-xs text-stone-500">{formatDuration(c.durationSec)}</span>
+   904→                          </div>
+   905→                          {c.notes ? <p className="mt-1 text-xs text-stone-500">{c.notes}</p> : null}
+   906→                        </div>
+   907→                        <div className="shrink-0 text-right text-xs text-stone-400">
+   908→                          <p>{formatDateTime(c.createdAt)}</p>
+   909→                          {c.user ? <p>by {c.user.name}</p> : null}
+   910→                        </div>
+   911→                      </div>
+   912→                    ))
+   913→                  ) : (
+   914→                    <p className="py-6 text-center text-sm text-stone-400">No calls logged yet.</p>
+   915→                  )}
+   916→                </div>
+   917→              </div>
+   918→            </TabsContent>
+   919→
+   920→            {/* WHATSAPP */}
+   921→            <TabsContent value="whatsapp">
+   922→              <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   923→                {bundle && bundle.conversations.length > 0 ? (
+   924→                  bundle.conversations.map((c) => (
+   925→                    <div key={c.id} className="flex flex-col gap-2 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+   926→                      <div>
+   927→                        <p className="text-sm font-medium text-stone-800">{c.phone}</p>
+   928→                        <p className="text-xs text-stone-400">Last message {c.lastMessageAt ? timeAgo(c.lastMessageAt) : '—'}</p>
+   929→                      </div>
+   930→                      <div className="flex items-center gap-2">
+   931→                        {c.unreadCount > 0 ? <Badge className="bg-emerald-600 text-white">{c.unreadCount} unread</Badge> : null}
+   932→                        <Button size="sm" variant="outline" onClick={() => setView('whatsapp', { leadId: lead.id })}>
+   933→                          <MessageCircle className="h-4 w-4" aria-hidden /> <span className="ml-1">Open Chat</span>
+   934→                        </Button>
+   935→                      </div>
+   936→                    </div>
+   937→                  ))
+   938→                ) : (
+   939→                  <div className="py-4 text-center">
+   940→                    <p className="text-sm text-stone-500">No WhatsApp conversation yet for this lead.</p>
+   941→                    <Button size="sm" variant="outline" className="mt-3" onClick={() => setView('whatsapp', { leadId: lead.id })}>
+   942→                      <MessageCircle className="h-4 w-4" aria-hidden /> <span className="ml-1">Open WhatsApp</span>
+   943→                    </Button>
+   944→                  </div>
+   945→                )}
+   946→              </div>
+   947→            </TabsContent>
+   948→
+   949→            {/* QUOTATIONS */}
+   950→            <TabsContent value="quotations">
+   951→              <div className="space-y-3">
+   952→                {canRecordPayment ? (
+   953→                  <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+   954→                    <div className="mb-2 flex items-center justify-between">
+   955→                      <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+   956→                        <FileText className="h-3.5 w-3.5" aria-hidden /> Quick Quotation
+   957→                      </p>
+   958→                      <Button size="sm" variant="ghost" onClick={() => setView('quotations', { leadId: lead.id })}>
+   959→                        View All
+   960→                      </Button>
+   961→                    </div>
+   962→                    <div className="space-y-2">
+   963→                      {quoteRows.map((row, i) => (
+   964→                        <div key={i} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+   965→                          <Select
+   966→                            value={row.productId}
+   967→                            onValueChange={(v) => setQuoteRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, productId: v } : r)))}
+   968→                          >
+   969→                            <SelectTrigger className="flex-1" aria-label={`Product for row ${i + 1}`}>
+   970→                              <SelectValue placeholder="Select product" />
+   971→                            </SelectTrigger>
+   972→                            <SelectContent>
+   973→                              {products.map((p) => (
+   974→                                <SelectItem key={p.id} value={p.id}>
+   975→                                  {p.name} — {formatINR(p.price)}
+   976→                                </SelectItem>
+   977→                              ))}
+   978→                            </SelectContent>
+   979→                          </Select>
+   980→                          <Input
+   981→                            type="number"
+   982→                            min={1}
+   983→                            className="w-full sm:w-24"
+   984→                            value={row.qty}
+   985→                            aria-label={`Quantity for row ${i + 1}`}
+   986→                            onChange={(e) => setQuoteRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, qty: e.target.value } : r)))}
+   987→                          />
+   988→                          {quoteRows.length > 1 ? (
+   989→                            <Button
+   990→                              size="icon"
+   991→                              variant="ghost"
+   992→                              aria-label={`Remove row ${i + 1}`}
+   993→                              onClick={() => setQuoteRows((rows) => rows.filter((_, idx) => idx !== i))}
+   994→                            >
+   995→                              <Trash2 className="h-4 w-4 text-rose-500" aria-hidden />
+   996→                            </Button>
+   997→                          ) : null}
+   998→                        </div>
+   999→                      ))}
+  1000→                      <div className="flex flex-wrap items-center gap-2">
+  1001→                        <Button size="sm" variant="ghost" onClick={() => setQuoteRows((rows) => [...rows, { productId: '', qty: '1' }])}>
+  1002→                          <Plus className="h-4 w-4" aria-hidden /> Add item
+  1003→                        </Button>
+  1004→                        <div className="flex items-center gap-1.5">
+  1005→                          <Label htmlFor="q-disc" className="text-xs text-stone-500">Discount ₹</Label>
+  1006→                          <Input id="q-disc" type="number" min={0} className="h-8 w-28" value={quoteDiscount} onChange={(e) => setQuoteDiscount(e.target.value)} />
+  1007→                        </div>
+  1008→                        <span className="ml-auto text-sm font-semibold text-emerald-700">Total: {formatINR(Math.max(0, quoteTotalPreview))}</span>
+  1009→                        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'quote'} onClick={submitQuotation}>
+  1010→                          {pending === 'quote' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1011→                          Create Quotation
+  1012→                        </Button>
+  1013→                      </div>
+  1014→                    </div>
+  1015→                  </div>
+  1016→                ) : null}
+  1017→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1018→                  {bundle && bundle.quotations.length > 0 ? (
+  1019→                    bundle.quotations.map((q) => (
+  1020→                      <div key={q.id} className="flex items-center justify-between rounded-lg border border-stone-100 p-3">
+  1021→                        <div>
+  1022→                          <p className="font-mono text-sm font-semibold text-stone-800">{q.quoteNo}</p>
+  1023→                          <p className="text-xs text-stone-400">{formatDateTime(q.createdAt)}</p>
+  1024→                        </div>
+  1025→                        <div className="flex items-center gap-2">
+  1026→                          <span className="text-sm font-semibold text-emerald-700">{formatINR(q.total)}</span>
+  1027→                          <StatusBadge status={q.status} variant="quotation" />
+  1028→                        </div>
+  1029→                      </div>
+  1030→                    ))
+  1031→                  ) : (
+  1032→                    <p className="py-6 text-center text-sm text-stone-400">No quotations yet.</p>
+  1033→                  )}
+  1034→                </div>
+  1035→              </div>
+  1036→            </TabsContent>
+  1037→
+  1038→            {/* ORDERS & PAYMENTS */}
+  1039→            <TabsContent value="orders">
+  1040→              <div className="space-y-3">
+  1041→                <div className="flex flex-wrap justify-end gap-2">
+  1042→                  {canRecordPayment ? (
+  1043→                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setPayOpen(true)}>
+  1044→                      <IndianRupee className="h-4 w-4" aria-hidden /> <span className="ml-1">Record Payment</span>
+  1045→                    </Button>
+  1046→                  ) : null}
+  1047→                  <Button size="sm" variant="outline" onClick={() => setView('orders', { leadId: lead.id })}>
+  1048→                    <ShoppingCart className="h-4 w-4" aria-hidden /> <span className="ml-1">New Order</span>
+  1049→                  </Button>
+  1050→                </div>
+  1051→                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1052→                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Orders</p>
+  1053→                  {bundle && bundle.orders.length > 0 ? (
+  1054→                    <div className="space-y-2">
+  1055→                      {bundle.orders.map((o) => (
+  1056→                        <div key={o.id} className="flex flex-col gap-2 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+  1057→                          <div>
+  1058→                            <p className="font-mono text-sm font-semibold text-stone-800">{o.orderNo}</p>
+  1059→                            <p className="text-xs text-stone-400">
+  1060→                              {formatDateTime(o.createdAt)} · Paid {formatINR(o.paidAmount)} / {formatINR(o.total)}
+  1061→                            </p>
+  1062→                          </div>
+  1063→                          <div className="flex items-center gap-2">
+  1064→                            <StatusBadge status={o.status} variant="order" />
+  1065→                            <StatusBadge status={o.paymentStatus} variant="payment" />
+  1066→                          </div>
+  1067→                        </div>
+  1068→                      ))}
+  1069→                    </div>
+  1070→                  ) : (
+  1071→                    <p className="py-4 text-center text-sm text-stone-400">No orders yet — convert a quotation or create one from the Orders view.</p>
+  1072→                  )}
+  1073→                </div>
+  1074→                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1075→                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Payments</p>
+  1076→                  {bundle && bundle.payments.length > 0 ? (
+  1077→                    <div className="space-y-2">
+  1078→                      {bundle.payments.map((p) => (
+  1079→                        <div key={p.id} className="flex items-center justify-between rounded-lg border border-stone-100 p-3">
+  1080→                          <div>
+  1081→                            <p className="font-mono text-sm font-semibold text-stone-800">{p.receiptNo}</p>
+  1082→                            <p className="text-xs text-stone-400">
+  1083→                              {PAYMENT_MODE_LABELS[p.mode] ?? p.mode} · {formatDateTime(p.paidAt)}
+  1084→                              {p.isAdvance ? ' · Advance' : ''}
+  1085→                            </p>
+  1086→                          </div>
+  1087→                          <span className="text-sm font-semibold text-emerald-700">{formatINR(p.amount)}</span>
+  1088→                        </div>
+  1089→                      ))}
+  1090→                    </div>
+  1091→                  ) : (
+  1092→                    <p className="py-4 text-center text-sm text-stone-400">No payments recorded.</p>
+  1093→                  )}
+  1094→                </div>
+  1095→              </div>
+  1096→            </TabsContent>
+  1097→
+  1098→            {/* DISPATCH */}
+  1099→            <TabsContent value="dispatch">
+  1100→              <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1101→                {bundle && bundle.orders.some((o) => o.shipment) ? (
+  1102→                  bundle.orders
+  1103→                    .filter((o) => o.shipment)
+  1104→                    .map((o) => {
+  1105→                      const s = o.shipment as ShipmentLite
+  1106→                      return (
+  1107→                        <div key={s.id} className="rounded-lg border border-stone-100 p-3">
+  1108→                          <div className="flex flex-wrap items-center justify-between gap-2">
+  1109→                            <p className="font-mono text-sm font-semibold text-stone-800">{o.orderNo}</p>
+  1110→                            <StatusBadge status={s.stage} variant="shipment" />
+  1111→                          </div>
+  1112→                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-stone-500 sm:grid-cols-4">
+  1113→                            <div><span className="block text-stone-400">Courier</span>{s.courierName ?? '—'}</div>
+  1114→                            <div><span className="block text-stone-400">AWB</span>{s.awbNumber ?? '—'}</div>
+  1115→                            <div><span className="block text-stone-400">Dispatched</span>{s.dispatchedAt ? formatDateTime(s.dispatchedAt) : '—'}</div>
+  1116→                            <div><span className="block text-stone-400">Delivered</span>{s.deliveredAt ? formatDateTime(s.deliveredAt) : '—'}</div>
+  1117→                          </div>
+  1118→                          {s.trackingUrl ? (
+  1119→                            <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline">
+  1120→                              Track shipment ↗
+  1121→                            </a>
+  1122→                          ) : null}
+  1123→                        </div>
+  1124→                      )
+  1125→                    })
+  1126→                ) : (
+  1127→                  <p className="py-6 text-center text-sm text-stone-400">
+  1128→                    <Truck className="mx-auto mb-2 h-6 w-6 text-stone-300" aria-hidden />
+  1129→                    No shipments yet — dispatch starts once an order is confirmed.
+  1130→                  </p>
+  1131→                )}
+  1132→              </div>
+  1133→            </TabsContent>
+  1134→
+  1135→            {/* TICKETS */}
+  1136→            <TabsContent value="tickets">
+  1137→              <div className="space-y-3">
+  1138→                <div className="flex justify-end">
+  1139→                  <Button size="sm" variant="outline" onClick={() => setTicketOpen(true)}>
+  1140→                    <Plus className="h-4 w-4" aria-hidden /> <span className="ml-1">Create Ticket</span>
+  1141→                  </Button>
+  1142→                </div>
+  1143→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1144→                  {bundle && bundle.tickets.length > 0 ? (
+  1145→                    bundle.tickets.map((t) => (
+  1146→                      <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 p-3">
+  1147→                        <div className="min-w-0">
+  1148→                          <p className="truncate text-sm font-medium text-stone-800">
+  1149→                            <span className="font-mono text-xs text-stone-500">{t.ticketNo}</span> — {t.subject}
+  1150→                          </p>
+  1151→                          <p className="text-xs text-stone-400">{formatDateTime(t.createdAt)}</p>
+  1152→                        </div>
+  1153→                        <div className="flex shrink-0 items-center gap-2">
+  1154→                          <StatusBadge status={t.priority} variant="priority" />
+  1155→                          <StatusBadge status={t.status} variant="ticket" />
+  1156→                        </div>
+  1157→                      </div>
+  1158→                    ))
+  1159→                  ) : (
+  1160→                    <p className="py-6 text-center text-sm text-stone-400">No support tickets for this lead.</p>
+  1161→                  )}
+  1162→                </div>
+  1163→              </div>
+  1164→            </TabsContent>
+  1165→
+  1166→            {/* MEETINGS */}
+  1167→            <TabsContent value="meetings">
+  1168→              <div className="space-y-3">
+  1169→                <div className="flex justify-end">
+  1170→                  <Button size="sm" variant="outline" onClick={() => setMeetOpen(true)}>
+  1171→                    <Video className="h-4 w-4" aria-hidden /> <span className="ml-1">Schedule Video Meeting</span>
+  1172→                  </Button>
+  1173→                </div>
+  1174→                {lead.visitDate ? (
+  1175→                  <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+  1176→                    <div>
+  1177→                      <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
+  1178→                        <Bot className="h-4 w-4" aria-hidden /> AI Visit Reminder
+  1179→                      </p>
+  1180→                      <p className="text-xs text-amber-700">
+  1181→                        Visit scheduled {formatDateTime(lead.visitDate)}{lead.visitTime ? ` at ${lead.visitTime}` : ''} — trigger a reminder call in Ajay Sir&apos;s voice.
+  1182→                      </p>
+  1183→                    </div>
+  1184→                    <Button size="sm" className="bg-amber-600 hover:bg-amber-700" disabled={pending === 'remind'} onClick={triggerAiReminder}>
+  1185→                      {pending === 'remind' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1186→                      Trigger AI Reminder Call
+  1187→                    </Button>
+  1188→                  </div>
+  1189→                ) : null}
+  1190→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1191→                  {bundle && bundle.meetings.length > 0 ? (
+  1192→                    bundle.meetings.map((m) => (
+  1193→                      <div key={m.id} className="flex flex-col gap-1 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+  1194→                        <div className="min-w-0">
+  1195→                          <p className="text-sm font-medium text-stone-800">{m.title}</p>
+  1196→                          <p className="text-xs text-stone-400">{formatDateTime(m.scheduledAt)}</p>
+  1197→                          {m.link ? (
+  1198→                            <a href={m.link} target="_blank" rel="noreferrer" className="text-xs font-medium text-emerald-700 hover:underline">
+  1199→                              Join meeting ↗
+  1200→                            </a>
+  1201→                          ) : null}
+  1202→                        </div>
+  1203→                        {m.outcome ? <StatusBadge status={m.outcome} variant="ticket" /> : <Badge variant="outline" className="text-stone-500">Scheduled</Badge>}
+  1204→                      </div>
+  1205→                    ))
+  1206→                  ) : (
+  1207→                    <p className="py-6 text-center text-sm text-stone-400">No meetings scheduled.</p>
+  1208→                  )}
+  1209→                </div>
+  1210→              </div>
+  1211→            </TabsContent>
+  1212→
+  1213→            {/* DOCUMENTS */}
+  1214→            <TabsContent value="documents">
+  1215→              <div className="space-y-3">
+  1216→                <div className="flex justify-end">
+  1217→                  <Button size="sm" variant="outline" onClick={() => setDocOpen(true)}>
+  1218→                    <Plus className="h-4 w-4" aria-hidden /> <span className="ml-1">Add Document</span>
+  1219→                  </Button>
+  1220→                </div>
+  1221→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1222→                  {bundle && bundle.documents.length > 0 ? (
+  1223→                    bundle.documents.map((d) => (
+  1224→                      <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 p-3">
+  1225→                        <div className="min-w-0">
+  1226→                          <p className="truncate text-sm font-medium text-stone-800">{d.name}</p>
+  1227→                          <p className="text-xs text-stone-400">
+  1228→                            {d.type ?? 'OTHER'} · v{d.version} · added {timeAgo(d.createdAt)}
+  1229→                            {d.expiryDate ? ` · expires ${formatDateTime(d.expiryDate)}` : ''}
+  1230→                          </p>
+  1231→                        </div>
+  1232→                        {d.url ? (
+  1233→                          <a href={d.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-emerald-700 hover:underline">
+  1234→                            Open ↗
+  1235→                          </a>
+  1236→                        ) : null}
+  1237→                      </div>
+  1238→                    ))
+  1239→                  ) : (
+  1240→                    <p className="py-6 text-center text-sm text-stone-400">No documents uploaded.</p>
+  1241→                  )}
+  1242→                </div>
+  1243→              </div>
+  1244→            </TabsContent>
+  1245→          </Tabs>
+  1246→        </div>
+  1247→
+  1248→        {/* right column — disposition panel (sticky) */}
+  1249→        <div className="space-y-4 lg:col-span-1">
+  1250→          <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm lg:sticky lg:top-4">
+  1251→            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+  1252→              <Tags className="h-3.5 w-3.5" aria-hidden /> Disposition
+  1253→            </p>
+  1254→            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+  1255→              {lead.disposition ? (
+  1256→                <>
+  1257→                  <Badge className="bg-emerald-600 text-white">{lead.disposition.label}</Badge>
+  1258→                  {lead.subDisposition ? <Badge variant="outline" className="border-stone-300 text-stone-600">{lead.subDisposition.label}</Badge> : null}
+  1259→                </>
+  1260→              ) : (
+  1261→                <span className="text-sm text-stone-400">No disposition set yet</span>
+  1262→              )}
+  1263→            </div>
+  1264→            {lead.lastContactAt ? <p className="mt-2 text-xs text-stone-400">Last contact {timeAgo(lead.lastContactAt)}</p> : null}
+  1265→
+  1266→            <div className="mt-4 space-y-3 border-t border-stone-100 pt-4">
+  1267→              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Update Disposition</p>
+  1268→              <div className="space-y-1.5">
+  1269→                <Label>Disposition</Label>
+  1270→                <Select value={dispId} onValueChange={(v) => { setDispId(v); setSubId('') }} disabled={pending === 'disposition'}>
+  1271→                  <SelectTrigger aria-label="Disposition"><SelectValue placeholder="Select disposition" /></SelectTrigger>
+  1272→                  <SelectContent>
+  1273→                    {dispositionOptions.map((d) => (
+  1274→                      <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>
+  1275→                    ))}
+  1276→                  </SelectContent>
+  1277→                </Select>
+  1278→              </div>
+  1279→              {dispId ? (
+  1280→                <div className="space-y-1.5">
+  1281→                  <Label>Sub-disposition</Label>
+  1282→                  <Select value={subId} onValueChange={setSubId} disabled={pending === 'disposition' || subOptions.length === 0}>
+  1283→                    <SelectTrigger aria-label="Sub-disposition"><SelectValue placeholder={subOptions.length ? 'Optional' : 'None available'} /></SelectTrigger>
+  1284→                    <SelectContent>
+  1285→                      {subOptions.map((s) => (
+  1286→                        <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+  1287→                      ))}
+  1288→                    </SelectContent>
+  1289→                  </Select>
+  1290→                </div>
+  1291→              ) : null}
+  1292→              {dispExtra.showCallback ? (
+  1293→                <div className="space-y-1.5">
+  1294→                  <Label htmlFor="disp-callback">Next Callback Date & Time *</Label>
+  1295→                  <Input id="disp-callback" type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} />
+  1296→                </div>
+  1297→              ) : null}
+  1298→              {dispExtra.showFollowUp ? (
+  1299→                <div className="space-y-1.5">
+  1300→                  <Label htmlFor="disp-followup">Follow-up Date & Time *</Label>
+  1301→                  <Input id="disp-followup" type="datetime-local" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
+  1302→                </div>
+  1303→              ) : null}
+  1304→              {dispExtra.showEstimated ? (
+  1305→                <div className="space-y-1.5">
+  1306→                  <Label htmlFor="disp-est">Estimated Order Value (₹)</Label>
+  1307→                  <Input id="disp-est" type="number" min={0} value={estValue} onChange={(e) => setEstValue(e.target.value)} placeholder="0" />
+  1308→                </div>
+  1309→              ) : null}
+  1310→              {dispExtra.showPayment ? (
+  1311→                <>
+  1312→                  <div className="space-y-1.5">
+  1313→                    <Label htmlFor="disp-pay">Payment Amount (₹)</Label>
+  1314→                    <Input id="disp-pay" type="number" min={0} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="0" />
+  1315→                  </div>
+  1316→                  <div className="space-y-1.5">
+  1317→                    <Label>Payment Mode</Label>
+  1318→                    <Select value={payMode} onValueChange={setPayMode}>
+  1319→                      <SelectTrigger aria-label="Payment mode"><SelectValue /></SelectTrigger>
+  1320→                      <SelectContent>
+  1321→                        {PAYMENT_MODES.map((m) => (
+  1322→                          <SelectItem key={m} value={m}>{PAYMENT_MODE_LABELS[m]}</SelectItem>
+  1323→                        ))}
+  1324→                      </SelectContent>
+  1325→                    </Select>
+  1326→                  </div>
+  1327→                </>
+  1328→              ) : null}
+  1329→              <div className="space-y-1.5">
+  1330→                <Label htmlFor="disp-note">Note</Label>
+  1331→                <Textarea id="disp-note" rows={2} value={dispNote} onChange={(e) => setDispNote(e.target.value)} placeholder="Call summary / context" />
+  1332→              </div>
+  1333→              <Button className="w-full bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'disposition' || !dispId} onClick={submitDisposition}>
+  1334→                {pending === 'disposition' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1335→                Save Disposition
+  1336→              </Button>
+  1337→            </div>
+  1338→          </div>
+  1339→
+  1340→          {/* notes card */}
+  1341→          <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1342→            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+  1343→              <StickyNote className="h-3.5 w-3.5" aria-hidden /> Requirement & Notes
+  1344→            </p>
+  1345→            <div className="mt-2 space-y-3 text-sm">
+  1346→              <div>
+  1347→                <p className="text-xs font-medium text-stone-400">Requirement</p>
+  1348→                <p className="whitespace-pre-line text-stone-700">{lead.requirementNotes || <span className="text-stone-400">Not captured</span>}</p>
+  1349→                {lead.productInterest ? <p className="mt-1 text-xs text-stone-500">Interest: {lead.productInterest}</p> : null}
+  1350→              </div>
+  1351→              <div>
+  1352→                <p className="text-xs font-medium text-stone-400">Internal Notes</p>
+  1353→                <p className="whitespace-pre-line text-stone-700">{lead.notes || <span className="text-stone-400">No notes yet</span>}</p>
+  1354→              </div>
+  1355→            </div>
+  1356→          </div>
+  1357→        </div>
+  1358→      </div>
+  1359→
+  1360→      {/* ---- dialogs ---- */}
+  1361→
+  1362→      <LeadFormDialog open={formOpen} onOpenChange={setFormOpen} lead={leadForForm} onSaved={() => setReloadKey((k) => k + 1)} />
+  1363→
+  1364→      {/* add note */}
+  1365→      <Dialog open={noteOpen} onOpenChange={(o) => { if (pending !== 'note') setNoteOpen(o) }}>
+  1366→        <DialogContent className="sm:max-w-md">
+  1367→          <DialogHeader>
+  1368→            <DialogTitle>Add Note — {lead.leadCode}</DialogTitle>
+  1369→            <DialogDescription>Notes are appended to the lead timeline.</DialogDescription>
+  1370→          </DialogHeader>
+  1371→          <Textarea rows={4} value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Write a note…" aria-label="Note text" />
+  1372→          <DialogFooter className="gap-2">
+  1373→            <Button variant="outline" disabled={pending === 'note'} onClick={() => setNoteOpen(false)}>Cancel</Button>
+  1374→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'note'} onClick={addNote}>
+  1375→              {pending === 'note' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1376→              Save Note
+  1377→            </Button>
+  1378→          </DialogFooter>
+  1379→        </DialogContent>
+  1380→      </Dialog>
+  1381→
+  1382→      {/* reassign */}
+  1383→      <Dialog open={reassignOpen} onOpenChange={(o) => { if (pending !== 'reassign') setReassignOpen(o) }}>
+  1384→        <DialogContent className="sm:max-w-sm">
+  1385→          <DialogHeader>
+  1386→            <DialogTitle>Reassign Lead</DialogTitle>
+  1387→            <DialogDescription>The lead and its WhatsApp conversations move to the new owner; sticky is reset.</DialogDescription>
+  1388→          </DialogHeader>
+  1389→          <div className="space-y-1.5">
+  1390→            <Label>New Owner</Label>
+  1391→            <Select value={reassignTarget} onValueChange={setReassignTarget} disabled={pending === 'reassign'}>
+  1392→              <SelectTrigger aria-label="Select new owner"><SelectValue placeholder="Select executive" /></SelectTrigger>
+  1393→              <SelectContent>
+  1394→                {execs.map((u) => (
+  1395→                  <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+  1396→                ))}
+  1397→              </SelectContent>
+  1398→            </Select>
+  1399→          </div>
+  1400→          <DialogFooter className="gap-2">
+  1401→            <Button variant="outline" disabled={pending === 'reassign'} onClick={() => setReassignOpen(false)}>Cancel</Button>
+  1402→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'reassign' || !reassignTarget} onClick={submitReassign}>
+  1403→              {pending === 'reassign' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1404→              Reassign
+  1405→            </Button>
+  1406→          </DialogFooter>
+  1407→        </DialogContent>
+  1408→      </Dialog>
+  1409→
+  1410→      {/* backward stage confirmation */}
+  1411→      <AlertDialog open={Boolean(backStage)} onOpenChange={(o) => { if (!o) setBackStage(null) }}>
+  1412→        <AlertDialogContent>
+  1413→          <AlertDialogHeader>
+  1414→            <AlertDialogTitle>Move lead backward?</AlertDialogTitle>
+  1415→            <AlertDialogDescription>
+  1416→              This lead will move from &quot;{lead.stage?.label ?? '—'}&quot; back to &quot;{backStage?.label ?? ''}&quot;. Confirm if this is intentional.
+  1417→            </AlertDialogDescription>
+  1418→          </AlertDialogHeader>
+  1419→          <AlertDialogFooter>
+  1420→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1421→            <AlertDialogAction
+  1422→              className="bg-amber-600 hover:bg-amber-700"
+  1423→              onClick={(e) => {
+  1424→                e.preventDefault()
+  1425→                const stage = backStage
+  1426→                setBackStage(null)
+  1427→                if (stage) doStageMove(stage)
+  1428→              }}
+  1429→            >
+  1430→              Move to {backStage?.label}
+  1431→            </AlertDialogAction>
+  1432→          </AlertDialogFooter>
+  1433→        </AlertDialogContent>
+  1434→      </AlertDialog>
+  1435→
+  1436→      {/* reschedule follow-up */}
+  1437→      <Dialog open={Boolean(reschedFollowup)} onOpenChange={(o) => { if (!o) setReschedFollowup(null) }}>
+  1438→        <DialogContent className="sm:max-w-sm">
+  1439→          <DialogHeader>
+  1440→            <DialogTitle>Reschedule Follow-up</DialogTitle>
+  1441→            <DialogDescription>Pick a new date & time — the lead&apos;s next follow-up moves too.</DialogDescription>
+  1442→          </DialogHeader>
+  1443→          <Input type="datetime-local" value={reschedTo} onChange={(e) => setReschedTo(e.target.value)} aria-label="New follow-up date and time" />
+  1444→          <DialogFooter className="gap-2">
+  1445→            <Button variant="outline" disabled={pending === 'resched'} onClick={() => setReschedFollowup(null)}>Cancel</Button>
+  1446→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'resched' || !reschedTo} onClick={submitReschedule}>
+  1447→              {pending === 'resched' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1448→              Reschedule
+  1449→            </Button>
+  1450→          </DialogFooter>
+  1451→        </DialogContent>
+  1452→      </Dialog>
+  1453→
+  1454→      {/* record payment */}
+  1455→      <Dialog open={payOpen} onOpenChange={(o) => { if (pending !== 'pay') setPayOpen(o) }}>
+  1456→        <DialogContent className="sm:max-w-sm">
+  1457→          <DialogHeader>
+  1458→            <DialogTitle>Record Payment — {lead.leadCode}</DialogTitle>
+  1459→            <DialogDescription>Receipt number is generated automatically.</DialogDescription>
+  1460→          </DialogHeader>
+  1461→          <div className="space-y-3">
+  1462→            <div className="space-y-1.5">
+  1463→              <Label htmlFor="pay-amt">Amount (₹) *</Label>
+  1464→              <Input id="pay-amt" type="number" min={1} value={payInput} onChange={(e) => setPayInput(e.target.value)} placeholder="0" />
+  1465→            </div>
+  1466→            <div className="space-y-1.5">
+  1467→              <Label>Mode</Label>
+  1468→              <Select value={payModeInput} onValueChange={setPayModeInput}>
+  1469→                <SelectTrigger aria-label="Payment mode"><SelectValue /></SelectTrigger>
+  1470→                <SelectContent>
+  1471→                  {PAYMENT_MODES.map((m) => (
+  1472→                    <SelectItem key={m} value={m}>{PAYMENT_MODE_LABELS[m]}</SelectItem>
+  1473→                  ))}
+  1474→                </SelectContent>
+  1475→              </Select>
+  1476→            </div>
+  1477→            <label className="flex items-center gap-2 text-sm">
+  1478→              <Checkbox checked={payAdvance} onCheckedChange={(v) => setPayAdvance(v === true)} aria-label="Mark as advance payment" />
+  1479→              Advance payment
+  1480→            </label>
+  1481→            <div className="space-y-1.5">
+  1482→              <Label htmlFor="pay-notes">Notes</Label>
+  1483→              <Input id="pay-notes" value={payNotes} onChange={(e) => setPayNotes(e.target.value)} placeholder="Optional reference / remark" />
+  1484→            </div>
+  1485→          </div>
+  1486→          <DialogFooter className="gap-2">
+  1487→            <Button variant="outline" disabled={pending === 'pay'} onClick={() => setPayOpen(false)}>Cancel</Button>
+  1488→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'pay'} onClick={submitPayment}>
+  1489→              {pending === 'pay' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1490→              Record Payment
+  1491→            </Button>
+  1492→          </DialogFooter>
+  1493→        </DialogContent>
+  1494→      </Dialog>
+  1495→
+  1496→      {/* create ticket */}
+  1497→      <Dialog open={ticketOpen} onOpenChange={(o) => { if (pending !== 'ticket') setTicketOpen(o) }}>
+  1498→        <DialogContent className="sm:max-w-md">
+  1499→          <DialogHeader>
+  1500→            <DialogTitle>Create Support Ticket</DialogTitle>
+  1501→            <DialogDescription>SLA is applied automatically based on priority.</DialogDescription>
+  1502→          </DialogHeader>
+  1503→          <div className="space-y-3">
+  1504→            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+  1505→              <div className="space-y-1.5">
+  1506→                <Label>Type</Label>
+  1507→                <Select value={ticketType} onValueChange={setTicketType}>
+  1508→                  <SelectTrigger aria-label="Ticket type"><SelectValue placeholder="Select type" /></SelectTrigger>
+  1509→                  <SelectContent>
+  1510→                    {ticketTypeOptions.map((t) => (
+  1511→                      <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+  1512→                    ))}
+  1513→                  </SelectContent>
+  1514→                </Select>
+  1515→              </div>
+  1516→              <div className="space-y-1.5">
+  1517→                <Label>Priority</Label>
+  1518→                <Select value={ticketPriority} onValueChange={setTicketPriority}>
+  1519→                  <SelectTrigger aria-label="Ticket priority"><SelectValue /></SelectTrigger>
+  1520→                  <SelectContent>
+  1521→                    {['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map((p) => (
+  1522→                      <SelectItem key={p} value={p}>{p}</SelectItem>
+  1523→                    ))}
+  1524→                  </SelectContent>
+  1525→                </Select>
+  1526→              </div>
+  1527→            </div>
+  1528→            <div className="space-y-1.5">
+  1529→              <Label htmlFor="t-subj">Subject *</Label>
+  1530→              <Input id="t-subj" value={ticketSubject} onChange={(e) => setTicketSubject(e.target.value)} placeholder="Short summary" />
+  1531→            </div>
+  1532→            <div className="space-y-1.5">
+  1533→              <Label htmlFor="t-desc">Description</Label>
+  1534→              <Textarea id="t-desc" rows={3} value={ticketDesc} onChange={(e) => setTicketDesc(e.target.value)} placeholder="Details…" />
+  1535→            </div>
+  1536→          </div>
+  1537→          <DialogFooter className="gap-2">
+  1538→            <Button variant="outline" disabled={pending === 'ticket'} onClick={() => setTicketOpen(false)}>Cancel</Button>
+  1539→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'ticket'} onClick={submitTicket}>
+  1540→              {pending === 'ticket' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1541→              Create Ticket
+  1542→            </Button>
+  1543→          </DialogFooter>
+  1544→        </DialogContent>
+  1545→      </Dialog>
+  1546→
+  1547→      {/* schedule meeting */}
+  1548→      <Dialog open={meetOpen} onOpenChange={(o) => { if (pending !== 'meet') setMeetOpen(o) }}>
+  1549→        <DialogContent className="sm:max-w-md">
+  1550→          <DialogHeader>
+  1551→            <DialogTitle>Schedule Video Meeting</DialogTitle>
+  1552→            <DialogDescription>A Google Meet link is generated automatically if left empty.</DialogDescription>
+  1553→          </DialogHeader>
+  1554→          <div className="space-y-3">
+  1555→            <div className="space-y-1.5">
+  1556→              <Label htmlFor="m-title">Title *</Label>
+  1557→              <Input id="m-title" value={meetTitle} onChange={(e) => setMeetTitle(e.target.value)} placeholder="e.g. Catalog discussion" />
+  1558→            </div>
+  1559→            <div className="space-y-1.5">
+  1560→              <Label htmlFor="m-at">Date & Time *</Label>
+  1561→              <Input id="m-at" type="datetime-local" value={meetAt} onChange={(e) => setMeetAt(e.target.value)} />
+  1562→            </div>
+  1563→            <div className="space-y-1.5">
+  1564→              <Label htmlFor="m-link">Meeting Link</Label>
+  1565→              <Input id="m-link" value={meetLink} onChange={(e) => setMeetLink(e.target.value)} placeholder="Optional — auto-generated" />
+  1566→            </div>
+  1567→          </div>
+  1568→          <DialogFooter className="gap-2">
+  1569→            <Button variant="outline" disabled={pending === 'meet'} onClick={() => setMeetOpen(false)}>Cancel</Button>
+  1570→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'meet'} onClick={submitMeeting}>
+  1571→              {pending === 'meet' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1572→              Schedule
+  1573→            </Button>
+  1574→          </DialogFooter>
+  1575→        </DialogContent>
+  1576→      </Dialog>
+  1577→
+  1578→      {/* add document */}
+  1579→      <Dialog open={docOpen} onOpenChange={(o) => { if (pending !== 'doc') setDocOpen(o) }}>
+  1580→        <DialogContent className="sm:max-w-sm">
+  1581→          <DialogHeader>
+  1582→            <DialogTitle>Add Document</DialogTitle>
+  1583→            <DialogDescription>Attach a document link to this lead.</DialogDescription>
+  1584→          </DialogHeader>
+  1585→          <div className="space-y-3">
+  1586→            <div className="space-y-1.5">
+  1587→              <Label htmlFor="d-name">Name *</Label>
+  1588→              <Input id="d-name" value={docName} onChange={(e) => setDocName(e.target.value)} placeholder="e.g. Signed PI" />
+  1589→            </div>
+  1590→            <div className="space-y-1.5">
+  1591→              <Label>Type</Label>
+  1592→              <Select value={docType} onValueChange={setDocType}>
+  1593→                <SelectTrigger aria-label="Document type"><SelectValue /></SelectTrigger>
+  1594→                <SelectContent>
+  1595→                  {DOCUMENT_TYPES.map((t) => (
+  1596→                    <SelectItem key={t} value={t}>{t.replaceAll('_', ' ')}</SelectItem>
+  1597→                  ))}
+  1598→                </SelectContent>
+  1599→              </Select>
+  1600→            </div>
+  1601→            <div className="space-y-1.5">
+  1602→              <Label htmlFor="d-url">URL</Label>
+  1603→              <Input id="d-url" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} placeholder="https://…" />
+  1604→            </div>
+  1605→          </div>
+  1606→          <DialogFooter className="gap-2">
+  1607→            <Button variant="outline" disabled={pending === 'doc'} onClick={() => setDocOpen(false)}>Cancel</Button>
+  1608→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'doc'} onClick={submitDocument}>
+  1609→              {pending === 'doc' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1610→              Add Document
+  1611→            </Button>
+  1612→          </DialogFooter>
+  1613→        </DialogContent>
+  1614→      </Dialog>
+  1615→    </div>
+  1616→  )
+  1617→}
+  1618→

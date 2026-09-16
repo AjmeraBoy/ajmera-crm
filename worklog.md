@@ -139,3 +139,46 @@ Stage Summary:
 - Conversations label editing is read-only by design — GET/POST /api/whatsapp/conversations has no PATCH (spec said check and fall back to chip)
 - Campaign revenue/conversions/ROI sourced from reports campaign-roi endpoint and merged client-side by campaign id
 - Note for orchestrator: pre-existing tsc error at src/components/crm/leads/leads-view.tsx:987 (missing Textarea import) is outside my scope
+
+---
+Task ID: 3
+Agent: Orchestrator (Z.ai Code)
+Task: LIVE Communication System — schema + core services (WhatsApp Alendei, SIP dialer, webhooks, automation, real-time)
+
+Work Log:
+- Researched REAL Alendei/FlexiWaba API from official KB (care.alendei.com):
+  * Send: POST {baseUrl}/campaign/flexiwaba/api body {apiKey, campaignName, destination, userName, source, media{url,filename}, templateParams[], tags[], attributes{}}
+  * Rules: campaign must be live; templateParams count MUST match template variables; media URL must be publicly accessible
+- Extended prisma/schema.prisma: Lead(waStatus, optInStatus/OptInAt/OptInSource, lastWaMessage/At/Direction), User(sipExtension), CallLog(providerCallId, customerNumber, agentNumber, callStatus, startAt/answerAt/endAt, holdSec, transferedTo), WhatsAppMessage(providerMessageId, requestId, mediaUrl, templateName/Vars, errorCode/Message, attempts, sentAt/deliveredAt/readAt/failedAt), WhatsAppTemplate(providerTemplateId, language, status, headerType/Text, footerText, buttons, variableCount, lastSyncedAt). NEW models: WebhookEvent (dedupeKey unique idempotency), ApiLog (sanitized provider logs), CampaignLog (requestId unique), AutomationRule, AutomationLog, FileAsset. db push OK.
+- NEW src/lib/comm/crypto.ts: AES-256-GCM secret encryption (CONFIG_ENCRYPTION_KEY), maskSecret, redactSecrets
+- NEW src/lib/comm/settings.ts: comm config resolver — ENV > encrypted DB (wa.* / sip.* / security.* keys), maskedCommConfig for UI, markWhatsappStatus/markSipStatus/markWebhookReceived
+- NEW src/lib/comm/api-logger.ts: ProviderError (AUTH/RATE_LIMIT/VALIDATION/NOT_FOUND/SERVER/NETWORK/TIMEOUT), mapProviderError → readable messages, logApiCall (secrets always redacted)
+- NEW src/lib/comm/socket.ts: emit client → socket relay (127.0.0.1:3004 internal API)
+- NEW src/lib/comm/whatsapp.ts: WhatsAppService — sendWhatsappMessage (opt-in enforcement for business-initiated, 24h session window for TEXT, requestId idempotency, exponential backoff retry 3 attempts, CampaignLog+ApiLog, timeline+socket), testWhatsappConnection (reachability + auth check WITHOUT sending customer messages), signAssetToken/verifyAssetToken for provider media fetch
+- NEW src/lib/comm/conversation.ts: findLeadByPhone, ensureConversation (auto lead creation with WhatsApp source, opt-in OPTED_IN, round-robin agent assignment)
+- NEW src/lib/comm/webhook-service.ts: processWhatsappWebhook (Meta Cloud API + flat formats normalizer, idempotent via dedupeKey, inbound message → conversation/message/lead updates + automations + socket, status events → message status), processVoiceWebhook (call lifecycle: incoming→RINGING popup w/ lead match or NEW CALLER, answered, hold, transfer, recording, ended→duration, missed→automations)
+- NEW src/lib/comm/automation.ts: rule engine (triggers: LEAD_CREATED/LEAD_ASSIGNED/LEAD_STATUS_CHANGED/FOLLOWUP_DUE/CALL_MISSED/CALL_COMPLETED/INBOUND_WHATSAPP/WHATSAPP_FAILED; actions: SEND_WHATSAPP_TEMPLATE/CREATE_TASK/NOTIFY_AGENT/UPDATE_LEAD_FIELD), runRuleManually
+- NEW src/lib/comm/dialer.ts: SipService — testSipConnection, clickToCall (CallLog QUEUED before dialing, configured click_to_call_url template {agent}{customer}{caller_id}{server}, Basic auth), callCommand (END/MUTE/HOLD/UNHOLD/TRANSFER via call_action_url template)
+- NEW mini-services/socket-service: socket.io on :3003 (path '/', cookie-validated sessions via /api/auth/validate-session, room subscription validation via /api/comm/validate-room), internal publish API on 127.0.0.1:3004 (/emit, /emit-many, /health, x-internal-secret). RUNNING + verified.
+- Installed socket.io-client in main project.
+
+Stage Summary:
+- Core communication layer COMPLETE and real (no mocks). Env contract:
+  WHATSAPP_API_BASE_URL, WHATSAPP_API_KEY, WHATSAPP_BUSINESS_NUMBER, COMM_WEBHOOK_SECRET, CONFIG_ENCRYPTION_KEY, PUBLIC_BASE_URL, INTERNAL_EVENT_SECRET, SIP_PROVIDER/SERVER/USERNAME/PASSWORD/PORT/TRANSPORT/CALLER_ID
+- NEXT (Task 4-a): API routes wiring these services. NEXT (Task 4-c): frontend.
+- socket-service internal API = 127.0.0.1:3004; websocket = :3003 via gateway (?XTransformPort=3003)
+
+---
+Task ID: 4
+Agent: Orchestrator (Z.ai Code)
+Task: Backend API routes + frontend integration + end-to-end QA (subagent-assisted UI, orchestrator wiring + fixes)
+
+Work Log:
+- BACKEND (src/app/api/**): auth/validate-session + comm/validate-room (internal, secret-guarded); webhooks/whatsapp (GET Meta verify + POST idempotent processor, secret via header/query, 401 on bad secret, 503 when unconfigured); webhooks/voice; comm/settings (GET masked incl. webhook URL + env source indicators, PUT with encrypted secret store: undefined/''=keep, '-'=clear, value=set); comm/settings/test; comm/health (all subsystems + stats); comm/health/test (whatsapp/sip/webhook E2E self-post/database); comm/api-logs, comm/campaign-logs (manual join), comm/webhook-events; automations CRUD + run + logs; files upload (15MB, mime allowlist) + files/[id] (signed token OR session); calls/click-to-call + calls/command; leads/optin; comm/cron/followups (dedup via AutomationLog 20h window); whatsapp/messages POST rewritten to real Alendei send (mock actions REMOVED; PATCH only mark_read/assign); whatsapp/templates variables-as-string tolerance; users route + sipExtension; calls PATCH (pre-existing kept)
+- FRONTEND: use-crm-socket.ts singleton (io '/?XTransformPort=3003', cookie-validated, room subscribe); incoming-call-popup (Known/New caller + Create Lead prefill flow); whatsapp-settings-view; sip-settings-view; communication-health-view (live tests incl. webhook E2E from browser origin); api-logs-view (3 tabs); automations-view (rule builder + RUN NOW); templates-view (variable labels, live preview); whatsapp-view rewritten (TEXT session-window gate, TEMPLATE dialog w/ dynamic variable inputs + preview, IMAGE/PDF/VIDEO upload via /api/files, live ticks QUEUED/SENT/DELIVERED/READ/FAILED, socket live append, lead 360 right panel w/ opt-in badge + toggle + click-to-call button); dialer-view integrated with real click-to-call (SIP status via 'call:update', HOLD/MUTE/TRANSFER/END commands; graceful manual fallback when SIP unconfigured)
+- FIXES during QA: activity.create missing data wrappers (4 files); lastInboundAt added to schema; callActionUrl in CommConfig; automation lead typing (Prisma payload types); leadInfoFor flat source/assignedTo for popup; lead select includes in messages/conversations routes; PhoneCog→PhoneCall; sidebar dup import; templates variables string/array tolerance; whatsapp-view Search import + null guards; incoming popup setState-in-effect; API-key/campaign fast-fail guards w/ readable errors
+- QA (agent-browser via Caddy :81 + real webhook posts): login OK; health dashboard + TEST WEBHOOK → CONNECTED 53ms PROCESSED; inbound WA webhook → lead LEAD-000042 auto-created (OPTED_IN, source WhatsApp) + conversation + message; replay → DUPLICATE (idempotent); wrong secret → 401; delivered→read statuses updated; voice webhook: incoming NEW CALLER popup + Create Lead full loop ("Lead created — tracked end-to-end"), known caller popup w/ lead info; answered→ended duration 42s logged; template create + send dialog (dynamic 3-var inputs + preview); send without API key → readable toast (no raw errors); click-to-call unconfigured → readable toast; API Logs/Webhook Events tabs show PROCESSED rows; automations empty state OK. QA test data cleaned from DB afterwards.
+- ENV: .env configured w/ generated COMM_WEBHOOK_SECRET, INTERNAL_EVENT_SECRET, CONFIG_ENCRYPTION_KEY (see .env.example); socket-service package.json uses --env-file=../../.env
+
+Stage Summary:
+- FULL communication layer LIVE and verified end-to-end at the code level. WhatsApp/SIP delivery requires real provider credentials (WHATSAPP_API_KEY from FlexiWaba panel + live API campaign; SIP click-to-call URL from telephony provider). Webhook pipeline is production-ready TODAY — Alendei webhook URL: {PUBLIC_BASE_URL}/api/webhooks/whatsapp?secret=<COMM_WEBHOOK_SECRET>

@@ -186,11 +186,13 @@ function emptyForm(department: string, stageId: string): FormState {
   }
 }
 
-export default function LeadFormDialog({ open, onOpenChange, lead, onSaved }: {
+export default function LeadFormDialog({ open, onOpenChange, lead, onSaved, initialMobile }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   lead?: LeadEditInput | null
   onSaved: () => void
+  /** Prefill the mobile field (used by the incoming-call "New Caller" flow) */
+  initialMobile?: string
 }) {
   const user = useAppStore((s) => s.user)
   const setView = useAppStore((s) => s.setView)
@@ -264,10 +266,12 @@ export default function LeadFormDialog({ open, onOpenChange, lead, onSaved }: {
       })
     } else {
       const dept = lockedDepartment || 'ONLINE'
-      setForm(emptyForm(dept, ''))
+      const base = emptyForm(dept, '')
+      // Prefill from an incoming call / external context when creating fresh
+      setForm(initialMobile ? { ...base, mobile: initialMobile, whatsapp: initialMobile } : base)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, lead?.id])
+  }, [open, lead?.id, initialMobile])
 
   // default the stage once masters are available (create mode)
   useEffect(() => {

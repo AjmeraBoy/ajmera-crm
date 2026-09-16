@@ -24,6 +24,7 @@ model User {
   phone           String?
   languages       String? // comma separated e.g. "Hindi,English"
   dailyCallTarget Int      @default(60)
+  sipExtension    String?  // SIP extension for the dialer (e.g. 1001)
   isActive        Boolean  @default(true)
   teamId          String?
   team            Team?    @relation("TeamMembership", fields: [teamId], references: [id])
@@ -140,6 +141,14 @@ model Lead {
   lastFollowUpAt   DateTime?
   nextFollowUpAt   DateTime?
   lastContactAt    DateTime?
+  // WhatsApp communication state
+  waStatus         String?   // AVAILABLE | NOT_AVAILABLE | UNKNOWN
+  optInStatus      String    @default("UNKNOWN") // OPTED_IN | NOT_OPTED_IN | UNKNOWN
+  optInAt          DateTime?
+  optInSource      String?   // INBOUND_MESSAGE | MANUAL | API
+  lastWaMessage    String?   // last WhatsApp message preview
+  lastWaMessageAt  DateTime?
+  lastWaDirection  String?   // IN | OUT
   isSticky         Boolean   @default(false)
   stickySince      DateTime?
   status           String    @default("ACTIVE") // ACTIVE | CONVERTED | LOST
@@ -195,20 +204,31 @@ model FollowUp {
 // ---------------- TELECALLING ----------------
 
 model CallLog {
-  id            String   @id @default(cuid())
-  leadId        String?
-  lead          Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  userId        String?
-  user          User?    @relation(fields: [userId], references: [id])
-  direction     String // INCOMING | OUTGOING
-  status        String // CONNECTED | NOT_CONNECTED | MISSED
-  durationSec   Int      @default(0)
-  recordingUrl  String?
-  isVideo       Boolean  @default(false)
-  channel       String   @default("CRM") // CRM | WHATSAPP | AI_REMINDER
-  notes         String?
-  dispositionId String?
-  createdAt     DateTime @default(now())
+  id              String    @id @default(cuid())
+  leadId          String?
+  lead            Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id])
+  direction       String    // INCOMING | OUTGOING
+  status          String    // CONNECTED | NOT_CONNECTED | MISSED
+  durationSec     Int       @default(0)
+  recordingUrl    String?
+  isVideo         Boolean   @default(false)
+  channel         String    @default("CRM") // CRM | SIP | WHATSAPP | AI_REMINDER
+  notes           String?
+  dispositionId   String?
+  // SIP / dialer lifecycle
+  providerCallId  String?   // call id returned by SIP/dialer provider
+  customerNumber  String?
+  agentNumber     String?
+  callStatus      String?   // QUEUED | RINGING | IN_PROGRESS | ON_HOLD | COMPLETED | FAILED | MISSED (live lifecycle)
+  startAt         DateTime?
+  answerAt        DateTime?
+  endAt           DateTime?
+  holdSec         Int       @default(0)
+  transferedTo    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
 }
 
 // ---------------- WHATSAPP (WABA) ----------------
@@ -226,38 +246,66 @@ model WhatsAppConversation {
   unreadCount   Int       @default(0)
   lastMessage   String?
   lastMessageAt DateTime?
+  lastInboundAt DateTime? // last customer inbound message — 24h session window anchor
   isPinned      Boolean   @default(false)
   createdAt     DateTime  @default(now())
   messages      WhatsAppMessage[]
 }
 
 model WhatsAppMessage {
-  id             String               @id @default(cuid())
-  conversationId String
-  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  userId         String?
-  user           User?                @relation(fields: [userId], references: [id])
-  direction      String // IN | OUT
-  type           String               @default("TEXT") // TEXT | IMAGE | PDF | VOICE | VIDEO | TEMPLATE | PRODUCT
-  body           String?
-  mediaName      String?
-  templateId     String?
-  status         String               @default("SENT") // SENT | DELIVERED | READ | FAILED
-  isPrivate      Boolean              @default(false)
-  campaignId     String?
-  campaign       Campaign?            @relation(fields: [campaignId], references: [id])
-  createdAt      DateTime             @default(now())
+  id                String               @id @default(cuid())
+  conversationId    String
+  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId            String?
+  user              User?                @relation(fields: [userId], references: [id])
+  direction         String               // IN | OUT
+  type              String               @default("TEXT") // TEXT | IMAGE | PDF | VOICE | VIDEO | TEMPLATE | PRODUCT | LOCATION
+  body              String?
+  mediaName         String?
+  mediaUrl          String?
+  templateId        String?
+  status            String               @default("QUEUED") // QUEUED | SENT | DELIVERED | READ | FAILED
+  isPrivate         Boolean              @default(false)
+  campaignId        String?
+  campaign          Campaign?            @relation(fields: [campaignId], references: [id])
+  // Provider integration
+  providerMessageId String?              // wamid from Alendei/WhatsApp
+  requestId         String?              // unique CRM request id (idempotency across retries)
+  templateName      String?
+  templateVars      String?              // JSON array of resolved params
+  errorCode         String?
+  errorMessage      String?
+  attempts          Int                  @default(0)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @default(now()) @updatedAt
+
+  @@index([providerMessageId])
+  @@index([requestId])
 }
 
 model WhatsAppTemplate {
-  id        String   @id @default(cuid())
-  name      String
-  category  String // MARKETING | UTILITY | SESSION
-  body      String
-  dept      String? // null = all
-  variables String? // JSON array e.g. ["customerName","catalogLink"]
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id                 String    @id @default(cuid())
+  name               String
+  providerTemplateId String?   // template id on Alendei / Meta
+  language           String    @default("en")
+  category           String    @default("MARKETING") // MARKETING | UTILITY | AUTHENTICATION | SESSION
+  status             String    @default("PENDING") // APPROVED | PENDING | REJECTED | DISABLED
+  body               String
+  headerType         String    @default("NONE") // NONE | TEXT | IMAGE | DOCUMENT | VIDEO
+  headerText         String?
+  footerText         String?
+  buttons            String?   // JSON array
+  variableCount      Int       @default(0)
+  variables          String?   // JSON array of example params / labels
+  dept               String?   // null = all
+  isActive           Boolean   @default(true)
+  lastSyncedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
 }
 
 // ---------------- PRODUCT & CATALOG ----------------
@@ -507,4 +555,112 @@ model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// ---------------- COMMUNICATION INTEGRATION (WhatsApp / SIP / Webhooks) ----------------
+
+/** Every inbound webhook payload is stored here. Idempotent processing via dedupeKey. */
+model WebhookEvent {
+  id               String    @id @default(cuid())
+  eventId          String?   // provider event id if present
+  dedupeKey        String    @unique // hash(provider+type+ids) — prevents duplicate processing
+  provider         String    // WHATSAPP | VOICE
+  eventType        String    // MESSAGE | MESSAGE_STATUS | CALL_EVENT | VERIFICATION | UNKNOWN
+  waId             String?
+  phoneNumber      String?
+  leadId           String?
+  payload          String    // raw JSON payload (archived for audit/debug)
+  processingStatus String    @default("RECEIVED") // RECEIVED | PROCESSED | DUPLICATE | FAILED | UNRECOGNIZED
+  error            String?
+  receivedAt       DateTime  @default(now())
+  processedAt      DateTime?
+  ip               String?
+
+  @@index([provider, eventType])
+  @@index([receivedAt])
+}
+
+/** Technical log of every outbound call to a communication provider. NEVER contains secrets. */
+model ApiLog {
+  id            String   @id @default(cuid())
+  provider      String   // WHATSAPP_ALENDEI | SIP | INTERNAL
+  endpoint      String
+  method        String
+  requestId     String?
+  responseCode  Int?
+  durationMs    Int?
+  success       Boolean
+  errorType     String?  // AUTH | RATE_LIMIT | VALIDATION | NOT_FOUND | SERVER | NETWORK | TIMEOUT | UNKNOWN
+  errorMessage  String?  // technical detail (sanitized, secrets redacted)
+  readableError String?  // user-friendly message shown in UI
+  leadId        String?
+  userId        String?
+  attempt       Int      @default(1)
+  createdAt     DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([success])
+}
+
+/** Audit trail of every Alendei campaign/API message send attempt. */
+model CampaignLog {
+  id                String   @id @default(cuid())
+  requestId         String   @unique
+  campaignName      String
+  destination       String
+  templateName      String?
+  leadId            String?
+  userId            String?
+  apiLogId          String?
+  success           Boolean
+  providerMessageId String?
+  errorMessage      String?
+  payload           String?  // sanitized request body (apiKey redacted)
+  createdAt         DateTime @default(now())
+
+  @@index([leadId])
+  @@index([createdAt])
+}
+
+/** WHEN/THEN communication automation engine rules. */
+model AutomationRule {
+  id        String    @id @default(cuid())
+  name      String
+  trigger   String    // LEAD_CREATED | LEAD_ASSIGNED | LEAD_STATUS_CHANGED | FOLLOWUP_DUE | CALL_MISSED | CALL_COMPLETED | INBOUND_WHATSAPP | WHATSAPP_FAILED | MANUAL
+  dept      String?   // null = all departments
+  conditions String?  // JSON: [{field, op, value}]
+  actions   String    // JSON array: [{type: SEND_WHATSAPP_TEMPLATE | CREATE_TASK | NOTIFY_AGENT | UPDATE_LEAD_FIELD, ...}]
+  isActive  Boolean   @default(false)
+  lastRunAt DateTime?
+  runCount  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  logs      AutomationLog[]
+}
+
+model AutomationLog {
+  id        String         @id @default(cuid())
+  ruleId    String
+  rule      AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  leadId    String?
+  trigger   String
+  status    String         // SUCCESS | FAILED | SKIPPED
+  detail    String?        // JSON summary of actions taken
+  createdAt DateTime       @default(now())
+
+  @@index([ruleId, createdAt])
+  @@index([leadId])
+}
+
+/** Uploaded media assets. Files live on disk under uploads/, served via authenticated/signed URL. */
+model FileAsset {
+  id          String   @id @default(cuid())
+  filename    String
+  mime        String
+  size        Int
+  path        String   // disk path (relative)
+  kind        String   @default("WHATSAPP_MEDIA") // WHATSAPP_MEDIA | RECORDING | DOCUMENT | OTHER
+  createdById String?
+  createdAt   DateTime @default(now())
 }

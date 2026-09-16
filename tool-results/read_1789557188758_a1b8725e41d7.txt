@@ -1,0 +1,539 @@
+  1080→                          <div>
+  1081→                            <p className="font-mono text-sm font-semibold text-stone-800">{p.receiptNo}</p>
+  1082→                            <p className="text-xs text-stone-400">
+  1083→                              {PAYMENT_MODE_LABELS[p.mode] ?? p.mode} · {formatDateTime(p.paidAt)}
+  1084→                              {p.isAdvance ? ' · Advance' : ''}
+  1085→                            </p>
+  1086→                          </div>
+  1087→                          <span className="text-sm font-semibold text-emerald-700">{formatINR(p.amount)}</span>
+  1088→                        </div>
+  1089→                      ))}
+  1090→                    </div>
+  1091→                  ) : (
+  1092→                    <p className="py-4 text-center text-sm text-stone-400">No payments recorded.</p>
+  1093→                  )}
+  1094→                </div>
+  1095→              </div>
+  1096→            </TabsContent>
+  1097→
+  1098→            {/* DISPATCH */}
+  1099→            <TabsContent value="dispatch">
+  1100→              <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1101→                {bundle && bundle.orders.some((o) => o.shipment) ? (
+  1102→                  bundle.orders
+  1103→                    .filter((o) => o.shipment)
+  1104→                    .map((o) => {
+  1105→                      const s = o.shipment as ShipmentLite
+  1106→                      return (
+  1107→                        <div key={s.id} className="rounded-lg border border-stone-100 p-3">
+  1108→                          <div className="flex flex-wrap items-center justify-between gap-2">
+  1109→                            <p className="font-mono text-sm font-semibold text-stone-800">{o.orderNo}</p>
+  1110→                            <StatusBadge status={s.stage} variant="shipment" />
+  1111→                          </div>
+  1112→                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-stone-500 sm:grid-cols-4">
+  1113→                            <div><span className="block text-stone-400">Courier</span>{s.courierName ?? '—'}</div>
+  1114→                            <div><span className="block text-stone-400">AWB</span>{s.awbNumber ?? '—'}</div>
+  1115→                            <div><span className="block text-stone-400">Dispatched</span>{s.dispatchedAt ? formatDateTime(s.dispatchedAt) : '—'}</div>
+  1116→                            <div><span className="block text-stone-400">Delivered</span>{s.deliveredAt ? formatDateTime(s.deliveredAt) : '—'}</div>
+  1117→                          </div>
+  1118→                          {s.trackingUrl ? (
+  1119→                            <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline">
+  1120→                              Track shipment ↗
+  1121→                            </a>
+  1122→                          ) : null}
+  1123→                        </div>
+  1124→                      )
+  1125→                    })
+  1126→                ) : (
+  1127→                  <p className="py-6 text-center text-sm text-stone-400">
+  1128→                    <Truck className="mx-auto mb-2 h-6 w-6 text-stone-300" aria-hidden />
+  1129→                    No shipments yet — dispatch starts once an order is confirmed.
+  1130→                  </p>
+  1131→                )}
+  1132→              </div>
+  1133→            </TabsContent>
+  1134→
+  1135→            {/* TICKETS */}
+  1136→            <TabsContent value="tickets">
+  1137→              <div className="space-y-3">
+  1138→                <div className="flex justify-end">
+  1139→                  <Button size="sm" variant="outline" onClick={() => setTicketOpen(true)}>
+  1140→                    <Plus className="h-4 w-4" aria-hidden /> <span className="ml-1">Create Ticket</span>
+  1141→                  </Button>
+  1142→                </div>
+  1143→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1144→                  {bundle && bundle.tickets.length > 0 ? (
+  1145→                    bundle.tickets.map((t) => (
+  1146→                      <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 p-3">
+  1147→                        <div className="min-w-0">
+  1148→                          <p className="truncate text-sm font-medium text-stone-800">
+  1149→                            <span className="font-mono text-xs text-stone-500">{t.ticketNo}</span> — {t.subject}
+  1150→                          </p>
+  1151→                          <p className="text-xs text-stone-400">{formatDateTime(t.createdAt)}</p>
+  1152→                        </div>
+  1153→                        <div className="flex shrink-0 items-center gap-2">
+  1154→                          <StatusBadge status={t.priority} variant="priority" />
+  1155→                          <StatusBadge status={t.status} variant="ticket" />
+  1156→                        </div>
+  1157→                      </div>
+  1158→                    ))
+  1159→                  ) : (
+  1160→                    <p className="py-6 text-center text-sm text-stone-400">No support tickets for this lead.</p>
+  1161→                  )}
+  1162→                </div>
+  1163→              </div>
+  1164→            </TabsContent>
+  1165→
+  1166→            {/* MEETINGS */}
+  1167→            <TabsContent value="meetings">
+  1168→              <div className="space-y-3">
+  1169→                <div className="flex justify-end">
+  1170→                  <Button size="sm" variant="outline" onClick={() => setMeetOpen(true)}>
+  1171→                    <Video className="h-4 w-4" aria-hidden /> <span className="ml-1">Schedule Video Meeting</span>
+  1172→                  </Button>
+  1173→                </div>
+  1174→                {lead.visitDate ? (
+  1175→                  <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+  1176→                    <div>
+  1177→                      <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
+  1178→                        <Bot className="h-4 w-4" aria-hidden /> AI Visit Reminder
+  1179→                      </p>
+  1180→                      <p className="text-xs text-amber-700">
+  1181→                        Visit scheduled {formatDateTime(lead.visitDate)}{lead.visitTime ? ` at ${lead.visitTime}` : ''} — trigger a reminder call in Ajay Sir&apos;s voice.
+  1182→                      </p>
+  1183→                    </div>
+  1184→                    <Button size="sm" className="bg-amber-600 hover:bg-amber-700" disabled={pending === 'remind'} onClick={triggerAiReminder}>
+  1185→                      {pending === 'remind' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1186→                      Trigger AI Reminder Call
+  1187→                    </Button>
+  1188→                  </div>
+  1189→                ) : null}
+  1190→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1191→                  {bundle && bundle.meetings.length > 0 ? (
+  1192→                    bundle.meetings.map((m) => (
+  1193→                      <div key={m.id} className="flex flex-col gap-1 rounded-lg border border-stone-100 p-3 sm:flex-row sm:items-center sm:justify-between">
+  1194→                        <div className="min-w-0">
+  1195→                          <p className="text-sm font-medium text-stone-800">{m.title}</p>
+  1196→                          <p className="text-xs text-stone-400">{formatDateTime(m.scheduledAt)}</p>
+  1197→                          {m.link ? (
+  1198→                            <a href={m.link} target="_blank" rel="noreferrer" className="text-xs font-medium text-emerald-700 hover:underline">
+  1199→                              Join meeting ↗
+  1200→                            </a>
+  1201→                          ) : null}
+  1202→                        </div>
+  1203→                        {m.outcome ? <StatusBadge status={m.outcome} variant="ticket" /> : <Badge variant="outline" className="text-stone-500">Scheduled</Badge>}
+  1204→                      </div>
+  1205→                    ))
+  1206→                  ) : (
+  1207→                    <p className="py-6 text-center text-sm text-stone-400">No meetings scheduled.</p>
+  1208→                  )}
+  1209→                </div>
+  1210→              </div>
+  1211→            </TabsContent>
+  1212→
+  1213→            {/* DOCUMENTS */}
+  1214→            <TabsContent value="documents">
+  1215→              <div className="space-y-3">
+  1216→                <div className="flex justify-end">
+  1217→                  <Button size="sm" variant="outline" onClick={() => setDocOpen(true)}>
+  1218→                    <Plus className="h-4 w-4" aria-hidden /> <span className="ml-1">Add Document</span>
+  1219→                  </Button>
+  1220→                </div>
+  1221→                <div className="max-h-[380px] space-y-2 overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1222→                  {bundle && bundle.documents.length > 0 ? (
+  1223→                    bundle.documents.map((d) => (
+  1224→                      <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 p-3">
+  1225→                        <div className="min-w-0">
+  1226→                          <p className="truncate text-sm font-medium text-stone-800">{d.name}</p>
+  1227→                          <p className="text-xs text-stone-400">
+  1228→                            {d.type ?? 'OTHER'} · v{d.version} · added {timeAgo(d.createdAt)}
+  1229→                            {d.expiryDate ? ` · expires ${formatDateTime(d.expiryDate)}` : ''}
+  1230→                          </p>
+  1231→                        </div>
+  1232→                        {d.url ? (
+  1233→                          <a href={d.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-emerald-700 hover:underline">
+  1234→                            Open ↗
+  1235→                          </a>
+  1236→                        ) : null}
+  1237→                      </div>
+  1238→                    ))
+  1239→                  ) : (
+  1240→                    <p className="py-6 text-center text-sm text-stone-400">No documents uploaded.</p>
+  1241→                  )}
+  1242→                </div>
+  1243→              </div>
+  1244→            </TabsContent>
+  1245→          </Tabs>
+  1246→        </div>
+  1247→
+  1248→        {/* right column — disposition panel (sticky) */}
+  1249→        <div className="space-y-4 lg:col-span-1">
+  1250→          <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm lg:sticky lg:top-4">
+  1251→            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+  1252→              <Tags className="h-3.5 w-3.5" aria-hidden /> Disposition
+  1253→            </p>
+  1254→            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+  1255→              {lead.disposition ? (
+  1256→                <>
+  1257→                  <Badge className="bg-emerald-600 text-white">{lead.disposition.label}</Badge>
+  1258→                  {lead.subDisposition ? <Badge variant="outline" className="border-stone-300 text-stone-600">{lead.subDisposition.label}</Badge> : null}
+  1259→                </>
+  1260→              ) : (
+  1261→                <span className="text-sm text-stone-400">No disposition set yet</span>
+  1262→              )}
+  1263→            </div>
+  1264→            {lead.lastContactAt ? <p className="mt-2 text-xs text-stone-400">Last contact {timeAgo(lead.lastContactAt)}</p> : null}
+  1265→
+  1266→            <div className="mt-4 space-y-3 border-t border-stone-100 pt-4">
+  1267→              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Update Disposition</p>
+  1268→              <div className="space-y-1.5">
+  1269→                <Label>Disposition</Label>
+  1270→                <Select value={dispId} onValueChange={(v) => { setDispId(v); setSubId('') }} disabled={pending === 'disposition'}>
+  1271→                  <SelectTrigger aria-label="Disposition"><SelectValue placeholder="Select disposition" /></SelectTrigger>
+  1272→                  <SelectContent>
+  1273→                    {dispositionOptions.map((d) => (
+  1274→                      <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>
+  1275→                    ))}
+  1276→                  </SelectContent>
+  1277→                </Select>
+  1278→              </div>
+  1279→              {dispId ? (
+  1280→                <div className="space-y-1.5">
+  1281→                  <Label>Sub-disposition</Label>
+  1282→                  <Select value={subId} onValueChange={setSubId} disabled={pending === 'disposition' || subOptions.length === 0}>
+  1283→                    <SelectTrigger aria-label="Sub-disposition"><SelectValue placeholder={subOptions.length ? 'Optional' : 'None available'} /></SelectTrigger>
+  1284→                    <SelectContent>
+  1285→                      {subOptions.map((s) => (
+  1286→                        <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+  1287→                      ))}
+  1288→                    </SelectContent>
+  1289→                  </Select>
+  1290→                </div>
+  1291→              ) : null}
+  1292→              {dispExtra.showCallback ? (
+  1293→                <div className="space-y-1.5">
+  1294→                  <Label htmlFor="disp-callback">Next Callback Date & Time *</Label>
+  1295→                  <Input id="disp-callback" type="datetime-local" value={callbackAt} onChange={(e) => setCallbackAt(e.target.value)} />
+  1296→                </div>
+  1297→              ) : null}
+  1298→              {dispExtra.showFollowUp ? (
+  1299→                <div className="space-y-1.5">
+  1300→                  <Label htmlFor="disp-followup">Follow-up Date & Time *</Label>
+  1301→                  <Input id="disp-followup" type="datetime-local" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
+  1302→                </div>
+  1303→              ) : null}
+  1304→              {dispExtra.showEstimated ? (
+  1305→                <div className="space-y-1.5">
+  1306→                  <Label htmlFor="disp-est">Estimated Order Value (₹)</Label>
+  1307→                  <Input id="disp-est" type="number" min={0} value={estValue} onChange={(e) => setEstValue(e.target.value)} placeholder="0" />
+  1308→                </div>
+  1309→              ) : null}
+  1310→              {dispExtra.showPayment ? (
+  1311→                <>
+  1312→                  <div className="space-y-1.5">
+  1313→                    <Label htmlFor="disp-pay">Payment Amount (₹)</Label>
+  1314→                    <Input id="disp-pay" type="number" min={0} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="0" />
+  1315→                  </div>
+  1316→                  <div className="space-y-1.5">
+  1317→                    <Label>Payment Mode</Label>
+  1318→                    <Select value={payMode} onValueChange={setPayMode}>
+  1319→                      <SelectTrigger aria-label="Payment mode"><SelectValue /></SelectTrigger>
+  1320→                      <SelectContent>
+  1321→                        {PAYMENT_MODES.map((m) => (
+  1322→                          <SelectItem key={m} value={m}>{PAYMENT_MODE_LABELS[m]}</SelectItem>
+  1323→                        ))}
+  1324→                      </SelectContent>
+  1325→                    </Select>
+  1326→                  </div>
+  1327→                </>
+  1328→              ) : null}
+  1329→              <div className="space-y-1.5">
+  1330→                <Label htmlFor="disp-note">Note</Label>
+  1331→                <Textarea id="disp-note" rows={2} value={dispNote} onChange={(e) => setDispNote(e.target.value)} placeholder="Call summary / context" />
+  1332→              </div>
+  1333→              <Button className="w-full bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'disposition' || !dispId} onClick={submitDisposition}>
+  1334→                {pending === 'disposition' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1335→                Save Disposition
+  1336→              </Button>
+  1337→            </div>
+  1338→          </div>
+  1339→
+  1340→          {/* notes card */}
+  1341→          <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+  1342→            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+  1343→              <StickyNote className="h-3.5 w-3.5" aria-hidden /> Requirement & Notes
+  1344→            </p>
+  1345→            <div className="mt-2 space-y-3 text-sm">
+  1346→              <div>
+  1347→                <p className="text-xs font-medium text-stone-400">Requirement</p>
+  1348→                <p className="whitespace-pre-line text-stone-700">{lead.requirementNotes || <span className="text-stone-400">Not captured</span>}</p>
+  1349→                {lead.productInterest ? <p className="mt-1 text-xs text-stone-500">Interest: {lead.productInterest}</p> : null}
+  1350→              </div>
+  1351→              <div>
+  1352→                <p className="text-xs font-medium text-stone-400">Internal Notes</p>
+  1353→                <p className="whitespace-pre-line text-stone-700">{lead.notes || <span className="text-stone-400">No notes yet</span>}</p>
+  1354→              </div>
+  1355→            </div>
+  1356→          </div>
+  1357→        </div>
+  1358→      </div>
+  1359→
+  1360→      {/* ---- dialogs ---- */}
+  1361→
+  1362→      <LeadFormDialog open={formOpen} onOpenChange={setFormOpen} lead={leadForForm} onSaved={() => setReloadKey((k) => k + 1)} />
+  1363→
+  1364→      {/* add note */}
+  1365→      <Dialog open={noteOpen} onOpenChange={(o) => { if (pending !== 'note') setNoteOpen(o) }}>
+  1366→        <DialogContent className="sm:max-w-md">
+  1367→          <DialogHeader>
+  1368→            <DialogTitle>Add Note — {lead.leadCode}</DialogTitle>
+  1369→            <DialogDescription>Notes are appended to the lead timeline.</DialogDescription>
+  1370→          </DialogHeader>
+  1371→          <Textarea rows={4} value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Write a note…" aria-label="Note text" />
+  1372→          <DialogFooter className="gap-2">
+  1373→            <Button variant="outline" disabled={pending === 'note'} onClick={() => setNoteOpen(false)}>Cancel</Button>
+  1374→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'note'} onClick={addNote}>
+  1375→              {pending === 'note' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1376→              Save Note
+  1377→            </Button>
+  1378→          </DialogFooter>
+  1379→        </DialogContent>
+  1380→      </Dialog>
+  1381→
+  1382→      {/* reassign */}
+  1383→      <Dialog open={reassignOpen} onOpenChange={(o) => { if (pending !== 'reassign') setReassignOpen(o) }}>
+  1384→        <DialogContent className="sm:max-w-sm">
+  1385→          <DialogHeader>
+  1386→            <DialogTitle>Reassign Lead</DialogTitle>
+  1387→            <DialogDescription>The lead and its WhatsApp conversations move to the new owner; sticky is reset.</DialogDescription>
+  1388→          </DialogHeader>
+  1389→          <div className="space-y-1.5">
+  1390→            <Label>New Owner</Label>
+  1391→            <Select value={reassignTarget} onValueChange={setReassignTarget} disabled={pending === 'reassign'}>
+  1392→              <SelectTrigger aria-label="Select new owner"><SelectValue placeholder="Select executive" /></SelectTrigger>
+  1393→              <SelectContent>
+  1394→                {execs.map((u) => (
+  1395→                  <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+  1396→                ))}
+  1397→              </SelectContent>
+  1398→            </Select>
+  1399→          </div>
+  1400→          <DialogFooter className="gap-2">
+  1401→            <Button variant="outline" disabled={pending === 'reassign'} onClick={() => setReassignOpen(false)}>Cancel</Button>
+  1402→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'reassign' || !reassignTarget} onClick={submitReassign}>
+  1403→              {pending === 'reassign' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1404→              Reassign
+  1405→            </Button>
+  1406→          </DialogFooter>
+  1407→        </DialogContent>
+  1408→      </Dialog>
+  1409→
+  1410→      {/* backward stage confirmation */}
+  1411→      <AlertDialog open={Boolean(backStage)} onOpenChange={(o) => { if (!o) setBackStage(null) }}>
+  1412→        <AlertDialogContent>
+  1413→          <AlertDialogHeader>
+  1414→            <AlertDialogTitle>Move lead backward?</AlertDialogTitle>
+  1415→            <AlertDialogDescription>
+  1416→              This lead will move from &quot;{lead.stage?.label ?? '—'}&quot; back to &quot;{backStage?.label ?? ''}&quot;. Confirm if this is intentional.
+  1417→            </AlertDialogDescription>
+  1418→          </AlertDialogHeader>
+  1419→          <AlertDialogFooter>
+  1420→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1421→            <AlertDialogAction
+  1422→              className="bg-amber-600 hover:bg-amber-700"
+  1423→              onClick={(e) => {
+  1424→                e.preventDefault()
+  1425→                const stage = backStage
+  1426→                setBackStage(null)
+  1427→                if (stage) doStageMove(stage)
+  1428→              }}
+  1429→            >
+  1430→              Move to {backStage?.label}
+  1431→            </AlertDialogAction>
+  1432→          </AlertDialogFooter>
+  1433→        </AlertDialogContent>
+  1434→      </AlertDialog>
+  1435→
+  1436→      {/* reschedule follow-up */}
+  1437→      <Dialog open={Boolean(reschedFollowup)} onOpenChange={(o) => { if (!o) setReschedFollowup(null) }}>
+  1438→        <DialogContent className="sm:max-w-sm">
+  1439→          <DialogHeader>
+  1440→            <DialogTitle>Reschedule Follow-up</DialogTitle>
+  1441→            <DialogDescription>Pick a new date & time — the lead&apos;s next follow-up moves too.</DialogDescription>
+  1442→          </DialogHeader>
+  1443→          <Input type="datetime-local" value={reschedTo} onChange={(e) => setReschedTo(e.target.value)} aria-label="New follow-up date and time" />
+  1444→          <DialogFooter className="gap-2">
+  1445→            <Button variant="outline" disabled={pending === 'resched'} onClick={() => setReschedFollowup(null)}>Cancel</Button>
+  1446→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'resched' || !reschedTo} onClick={submitReschedule}>
+  1447→              {pending === 'resched' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1448→              Reschedule
+  1449→            </Button>
+  1450→          </DialogFooter>
+  1451→        </DialogContent>
+  1452→      </Dialog>
+  1453→
+  1454→      {/* record payment */}
+  1455→      <Dialog open={payOpen} onOpenChange={(o) => { if (pending !== 'pay') setPayOpen(o) }}>
+  1456→        <DialogContent className="sm:max-w-sm">
+  1457→          <DialogHeader>
+  1458→            <DialogTitle>Record Payment — {lead.leadCode}</DialogTitle>
+  1459→            <DialogDescription>Receipt number is generated automatically.</DialogDescription>
+  1460→          </DialogHeader>
+  1461→          <div className="space-y-3">
+  1462→            <div className="space-y-1.5">
+  1463→              <Label htmlFor="pay-amt">Amount (₹) *</Label>
+  1464→              <Input id="pay-amt" type="number" min={1} value={payInput} onChange={(e) => setPayInput(e.target.value)} placeholder="0" />
+  1465→            </div>
+  1466→            <div className="space-y-1.5">
+  1467→              <Label>Mode</Label>
+  1468→              <Select value={payModeInput} onValueChange={setPayModeInput}>
+  1469→                <SelectTrigger aria-label="Payment mode"><SelectValue /></SelectTrigger>
+  1470→                <SelectContent>
+  1471→                  {PAYMENT_MODES.map((m) => (
+  1472→                    <SelectItem key={m} value={m}>{PAYMENT_MODE_LABELS[m]}</SelectItem>
+  1473→                  ))}
+  1474→                </SelectContent>
+  1475→              </Select>
+  1476→            </div>
+  1477→            <label className="flex items-center gap-2 text-sm">
+  1478→              <Checkbox checked={payAdvance} onCheckedChange={(v) => setPayAdvance(v === true)} aria-label="Mark as advance payment" />
+  1479→              Advance payment
+  1480→            </label>
+  1481→            <div className="space-y-1.5">
+  1482→              <Label htmlFor="pay-notes">Notes</Label>
+  1483→              <Input id="pay-notes" value={payNotes} onChange={(e) => setPayNotes(e.target.value)} placeholder="Optional reference / remark" />
+  1484→            </div>
+  1485→          </div>
+  1486→          <DialogFooter className="gap-2">
+  1487→            <Button variant="outline" disabled={pending === 'pay'} onClick={() => setPayOpen(false)}>Cancel</Button>
+  1488→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'pay'} onClick={submitPayment}>
+  1489→              {pending === 'pay' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1490→              Record Payment
+  1491→            </Button>
+  1492→          </DialogFooter>
+  1493→        </DialogContent>
+  1494→      </Dialog>
+  1495→
+  1496→      {/* create ticket */}
+  1497→      <Dialog open={ticketOpen} onOpenChange={(o) => { if (pending !== 'ticket') setTicketOpen(o) }}>
+  1498→        <DialogContent className="sm:max-w-md">
+  1499→          <DialogHeader>
+  1500→            <DialogTitle>Create Support Ticket</DialogTitle>
+  1501→            <DialogDescription>SLA is applied automatically based on priority.</DialogDescription>
+  1502→          </DialogHeader>
+  1503→          <div className="space-y-3">
+  1504→            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+  1505→              <div className="space-y-1.5">
+  1506→                <Label>Type</Label>
+  1507→                <Select value={ticketType} onValueChange={setTicketType}>
+  1508→                  <SelectTrigger aria-label="Ticket type"><SelectValue placeholder="Select type" /></SelectTrigger>
+  1509→                  <SelectContent>
+  1510→                    {ticketTypeOptions.map((t) => (
+  1511→                      <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+  1512→                    ))}
+  1513→                  </SelectContent>
+  1514→                </Select>
+  1515→              </div>
+  1516→              <div className="space-y-1.5">
+  1517→                <Label>Priority</Label>
+  1518→                <Select value={ticketPriority} onValueChange={setTicketPriority}>
+  1519→                  <SelectTrigger aria-label="Ticket priority"><SelectValue /></SelectTrigger>
+  1520→                  <SelectContent>
+  1521→                    {['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map((p) => (
+  1522→                      <SelectItem key={p} value={p}>{p}</SelectItem>
+  1523→                    ))}
+  1524→                  </SelectContent>
+  1525→                </Select>
+  1526→              </div>
+  1527→            </div>
+  1528→            <div className="space-y-1.5">
+  1529→              <Label htmlFor="t-subj">Subject *</Label>
+  1530→              <Input id="t-subj" value={ticketSubject} onChange={(e) => setTicketSubject(e.target.value)} placeholder="Short summary" />
+  1531→            </div>
+  1532→            <div className="space-y-1.5">
+  1533→              <Label htmlFor="t-desc">Description</Label>
+  1534→              <Textarea id="t-desc" rows={3} value={ticketDesc} onChange={(e) => setTicketDesc(e.target.value)} placeholder="Details…" />
+  1535→            </div>
+  1536→          </div>
+  1537→          <DialogFooter className="gap-2">
+  1538→            <Button variant="outline" disabled={pending === 'ticket'} onClick={() => setTicketOpen(false)}>Cancel</Button>
+  1539→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'ticket'} onClick={submitTicket}>
+  1540→              {pending === 'ticket' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1541→              Create Ticket
+  1542→            </Button>
+  1543→          </DialogFooter>
+  1544→        </DialogContent>
+  1545→      </Dialog>
+  1546→
+  1547→      {/* schedule meeting */}
+  1548→      <Dialog open={meetOpen} onOpenChange={(o) => { if (pending !== 'meet') setMeetOpen(o) }}>
+  1549→        <DialogContent className="sm:max-w-md">
+  1550→          <DialogHeader>
+  1551→            <DialogTitle>Schedule Video Meeting</DialogTitle>
+  1552→            <DialogDescription>A Google Meet link is generated automatically if left empty.</DialogDescription>
+  1553→          </DialogHeader>
+  1554→          <div className="space-y-3">
+  1555→            <div className="space-y-1.5">
+  1556→              <Label htmlFor="m-title">Title *</Label>
+  1557→              <Input id="m-title" value={meetTitle} onChange={(e) => setMeetTitle(e.target.value)} placeholder="e.g. Catalog discussion" />
+  1558→            </div>
+  1559→            <div className="space-y-1.5">
+  1560→              <Label htmlFor="m-at">Date & Time *</Label>
+  1561→              <Input id="m-at" type="datetime-local" value={meetAt} onChange={(e) => setMeetAt(e.target.value)} />
+  1562→            </div>
+  1563→            <div className="space-y-1.5">
+  1564→              <Label htmlFor="m-link">Meeting Link</Label>
+  1565→              <Input id="m-link" value={meetLink} onChange={(e) => setMeetLink(e.target.value)} placeholder="Optional — auto-generated" />
+  1566→            </div>
+  1567→          </div>
+  1568→          <DialogFooter className="gap-2">
+  1569→            <Button variant="outline" disabled={pending === 'meet'} onClick={() => setMeetOpen(false)}>Cancel</Button>
+  1570→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'meet'} onClick={submitMeeting}>
+  1571→              {pending === 'meet' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1572→              Schedule
+  1573→            </Button>
+  1574→          </DialogFooter>
+  1575→        </DialogContent>
+  1576→      </Dialog>
+  1577→
+  1578→      {/* add document */}
+  1579→      <Dialog open={docOpen} onOpenChange={(o) => { if (pending !== 'doc') setDocOpen(o) }}>
+  1580→        <DialogContent className="sm:max-w-sm">
+  1581→          <DialogHeader>
+  1582→            <DialogTitle>Add Document</DialogTitle>
+  1583→            <DialogDescription>Attach a document link to this lead.</DialogDescription>
+  1584→          </DialogHeader>
+  1585→          <div className="space-y-3">
+  1586→            <div className="space-y-1.5">
+  1587→              <Label htmlFor="d-name">Name *</Label>
+  1588→              <Input id="d-name" value={docName} onChange={(e) => setDocName(e.target.value)} placeholder="e.g. Signed PI" />
+  1589→            </div>
+  1590→            <div className="space-y-1.5">
+  1591→              <Label>Type</Label>
+  1592→              <Select value={docType} onValueChange={setDocType}>
+  1593→                <SelectTrigger aria-label="Document type"><SelectValue /></SelectTrigger>
+  1594→                <SelectContent>
+  1595→                  {DOCUMENT_TYPES.map((t) => (
+  1596→                    <SelectItem key={t} value={t}>{t.replaceAll('_', ' ')}</SelectItem>
+  1597→                  ))}
+  1598→                </SelectContent>
+  1599→              </Select>
+  1600→            </div>
+  1601→            <div className="space-y-1.5">
+  1602→              <Label htmlFor="d-url">URL</Label>
+  1603→              <Input id="d-url" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} placeholder="https://…" />
+  1604→            </div>
+  1605→          </div>
+  1606→          <DialogFooter className="gap-2">
+  1607→            <Button variant="outline" disabled={pending === 'doc'} onClick={() => setDocOpen(false)}>Cancel</Button>
+  1608→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={pending === 'doc'} onClick={submitDocument}>
+  1609→              {pending === 'doc' ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1610→              Add Document
+  1611→            </Button>
+  1612→          </DialogFooter>
+  1613→        </DialogContent>
+  1614→      </Dialog>
+  1615→    </div>
+  1616→  )
+  1617→}
+  1618→

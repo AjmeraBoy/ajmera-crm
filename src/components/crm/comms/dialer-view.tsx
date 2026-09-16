@@ -43,6 +43,7 @@ import { EmptyState } from '@/components/crm/shared/empty-state'
 import { UserAvatar } from '@/components/crm/shared/avatar'
 import { DataTable, type Column } from '@/components/crm/shared/data-table'
 import { useMasters } from '@/components/crm/shared/use-masters'
+import { getCrmSocket, type CallUpdateEvent } from '@/hooks/use-crm-socket'
 
 // ---------- types ----------
 
@@ -241,6 +242,12 @@ export default function DialerView() {
   const [endingCall, setEndingCall] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // LIVE SIP dialer state (click-to-call via provider API)
+  const [sipCallId, setSipCallId] = useState<string | null>(null)
+  const [sipStatus, setSipStatus] = useState<string>('QUEUED')
+  const [dialing, setDialing] = useState(false)
+  const answeredAtRef = useRef<number | null>(null)
+
   // disposition form
   const [dispId, setDispId] = useState('')
   const [subId, setSubId] = useState('')
@@ -354,6 +361,31 @@ export default function DialerView() {
     }
   }, [callOpen, phase])
 
+  // ---------- LIVE SIP call status via socket ----------
+
+  useEffect(() => {
+    if (!callOpen || !sipCallId) return
+    const s = getCrmSocket()
+    const onUpdate = (data: CallUpdateEvent) => {
+      if (data.callId !== sipCallId) return
+      if (data.callStatus === 'IN_PROGRESS' && !answeredAtRef.current) {
+        answeredAtRef.current = Date.now()
+        setSeconds(0) // restart the visible timer from the moment the call was answered
+      }
+      if (data.callStatus) setSipStatus(data.callStatus)
+      if (['COMPLETED', 'MISSED', 'FAILED'].includes(data.callStatus ?? '')) {
+        if (phase === 'calling') {
+          const t = setTimeout(() => setPhase('disposition'), 400)
+          return () => clearTimeout(t)
+        }
+      }
+    }
+    s.on('call:update', onUpdate)
+    return () => {
+      s.off('call:update', onUpdate)
+    }
+  }, [callOpen, sipCallId, phase])
+
   const panelLead = bundle?.lead ?? null
   const panelDept = panelLead?.department ?? selected?.department ?? user?.department ?? ''
   const dispositionOptions = useMemo(() => masters.items('disposition', panelDept || undefined), [masters, panelDept])
@@ -374,27 +406,89 @@ export default function DialerView() {
     setDispNote('')
   }, [])
 
-  const startCall = () => {
+  const startCall = async () => {
+    if (!selected) return
     setPhase('calling')
     setSeconds(0)
     resetDispForm()
     setCallOpen(true)
+    // LIVE mode: dial through the configured SIP/dialer provider first.
+    // If the dialer is not configured, fall back to manual call logging.
+    setDialing(true)
+    setSipCallId(null)
+    setSipStatus('QUEUED')
+    try {
+      const res = await api<{ ok: boolean; callId: string; detail?: string }>('/api/calls/click-to-call', {
+        method: 'POST',
+        body: { leadId: selected.id },
+      })
+      setSipCallId(res.callId)
+      setSipStatus('RINGING')
+      answeredAtRef.current = null
+      toast({ title: 'Dialing via SIP…', description: res.detail ?? 'Customer number sent to the dialer' })
+    } catch (e) {
+      setSipCallId(null)
+      setSipStatus('MANUAL')
+      toast({
+        title: 'SIP dialer not used',
+        description: `${(e as Error).message} Running in manual logging mode.`,
+        variant: 'destructive',
+      })
+    } finally {
+      setDialing(false)
+    }
+  }
+
+  const sipCommand = async (action: 'END' | 'MUTE' | 'UNMUTE' | 'HOLD' | 'UNHOLD', target?: string) => {
+    if (!sipCallId) return
+    try {
+      const res = await api<{ ok: boolean; detail?: string }>('/api/calls/command', {
+        method: 'POST',
+        body: { callId: sipCallId, action, target },
+      })
+      if (action === 'HOLD') setSipStatus('ON_HOLD')
+      if (action === 'UNHOLD') setSipStatus('IN_PROGRESS')
+      if (action !== 'END') toast({ title: `${action} sent`, description: res.detail })
+      return true
+    } catch (e) {
+      toast({ title: `${action} failed`, description: (e as Error).message, variant: 'destructive' })
+      return false
+    }
+  }
+
+  const sipCommandTransfer = async (target: string) => {
+    if (!sipCallId) return
+    try {
+      const res = await api<{ ok: boolean; detail?: string }>('/api/calls/command', {
+        method: 'POST',
+        body: { callId: sipCallId, action: 'TRANSFER', target },
+      })
+      toast({ title: 'Transfer sent', description: res.detail ?? `Transferring to ${target}` })
+    } catch (e) {
+      toast({ title: 'Transfer failed', description: (e as Error).message, variant: 'destructive' })
+    }
   }
 
   const endCall = async () => {
     if (!selected) return
     setEndingCall(true)
     try {
-      await api('/api/calls', {
-        method: 'POST',
-        body: {
-          leadId: selected.id,
-          direction: 'OUTGOING',
-          status: 'CONNECTED',
-          durationSec: seconds,
-        },
-      })
-      setPhase('disposition')
+      if (sipCallId) {
+        // LIVE mode: the CallLog already exists (channel SIP) — end it via the dialer.
+        await sipCommand('END')
+        setPhase('disposition')
+      } else {
+        await api('/api/calls', {
+          method: 'POST',
+          body: {
+            leadId: selected.id,
+            direction: 'OUTGOING',
+            status: 'CONNECTED',
+            durationSec: seconds,
+          },
+        })
+        setPhase('disposition')
+      }
       refreshAll()
     } catch (e) {
       toast({ title: 'Failed to log call', description: (e as Error).message, variant: 'destructive' })
@@ -872,17 +966,57 @@ export default function DialerView() {
               <p className="mt-4 text-lg font-semibold text-stone-900">{selected?.customerName ?? 'Calling...'}</p>
               <p className="font-mono text-sm text-stone-500">{selected?.mobile}</p>
               <p className="mt-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden /> Calling...
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden />
+                {sipCallId
+                  ? sipStatus === 'IN_PROGRESS'
+                    ? 'Connected'
+                    : sipStatus === 'ON_HOLD'
+                      ? 'On Hold'
+                      : sipStatus === 'RINGING'
+                        ? 'Ringing…'
+                        : sipStatus
+                  : dialing
+                    ? 'Sending to dialer…'
+                    : 'Calling (manual)'}
               </p>
               <p className="mt-4 font-mono text-4xl font-bold tabular-nums text-stone-800" aria-live="polite">
                 {String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}
               </p>
-              <p className="mt-1 text-xs text-stone-400">Simulated call — duration is recorded in the CRM on end</p>
+              <p className="mt-1 text-xs text-stone-400">
+                {sipCallId
+                  ? 'Live SIP call — status updates in real time from the dialer'
+                  : 'Manual mode — duration is recorded in the CRM on end'}
+              </p>
+              {sipCallId ? (
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={sipStatus !== 'IN_PROGRESS' && sipStatus !== 'ON_HOLD'}
+                    onClick={() => void sipCommand(sipStatus === 'ON_HOLD' ? 'UNHOLD' : 'HOLD')}
+                  >
+                    {sipStatus === 'ON_HOLD' ? 'Unhold' : 'Hold'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => void sipCommand('MUTE')}>
+                    Mute
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const target = window.prompt('Transfer to agent extension or number:')
+                      if (target) void sipCommandTransfer(target.trim())
+                    }}
+                  >
+                    Transfer
+                  </Button>
+                </div>
+              ) : null}
               <Button
                 variant="destructive"
                 size="lg"
                 className="mt-5 min-h-11 w-full sm:w-auto"
-                disabled={endingCall}
+                disabled={endingCall || dialing}
                 onClick={() => void endCall()}
               >
                 {endingCall ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PhoneOff className="mr-1.5 h-4 w-4" />}

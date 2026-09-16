@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, route, requireUser, readBody, ApiError, deptScope } from '@/lib/api'
 import type { SessionUser } from '@/lib/auth'
+import { sendWhatsappMessage } from '@/lib/comm/whatsapp'
 
 // ---------- local helpers ----------
 
@@ -42,11 +43,32 @@ async function loadConversation(conversationId: string) {
     where: { id: conversationId },
     include: {
       owner: { select: { id: true, name: true } },
-      lead: { select: { id: true, leadCode: true, customerName: true, department: true } },
+      lead: {
+        select: {
+          id: true,
+          leadCode: true,
+          customerName: true,
+          department: true,
+          mobile: true,
+          whatsapp: true,
+          optInStatus: true,
+          waStatus: true,
+          lastWaMessage: true,
+          lastWaMessageAt: true,
+          source: { select: { label: true } },
+          assignedTo: { select: { id: true, name: true } },
+        },
+      },
     },
   })
   if (!conv) throw new ApiError('Conversation not found', 404)
   return conv
+}
+
+function originOf(req: Request): string {
+  const proto = req.headers.get('x-forwarded-proto') || 'http'
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'localhost:3000'
+  return `${proto}://${host}`
 }
 
 // ---------- GET /api/whatsapp/messages?conversationId=&page= ----------
@@ -77,101 +99,104 @@ export const GET = route(async (req) => {
   return ok({ messages, conversation: conv })
 })
 
-// ---------- POST /api/whatsapp/messages ----------
+// ---------- POST /api/whatsapp/messages — REAL send via Alendei ----------
+
+const SEND_TYPES = ['TEXT', 'TEMPLATE', 'IMAGE', 'PDF', 'VIDEO']
 
 export const POST = route(async (req) => {
   const user = await requireUser()
-  const body = await readBody<{ conversationId?: string; body?: string; type?: string; mediaName?: string; templateId?: string }>(req)
+  const body = await readBody<{
+    conversationId?: string
+    type?: string
+    body?: string
+    mediaAssetId?: string
+    templateId?: string
+    templateParams?: unknown
+  }>(req)
   const conversationId = str(body.conversationId)
   if (!conversationId) throw new ApiError('conversationId is required', 400)
   const conv = await loadConversation(conversationId)
   await ensureConversationAccess(user, conv)
 
-  const templateId = str(body.templateId)
-  let type = str(body.type) || 'TEXT'
-  let text = str(body.body)
-  if (templateId) {
-    const template = await db.whatsAppTemplate.findUnique({ where: { id: templateId }, select: { id: true, body: true } })
-    if (!template) throw new ApiError('Template not found', 400)
-    if (!text) text = template.body
-    if (!str(body.type)) type = 'TEMPLATE'
+  const type = (str(body.type) || 'TEXT').toUpperCase()
+  if (!SEND_TYPES.includes(type)) throw new ApiError(`type must be one of ${SEND_TYPES.join(', ')}`, 400)
+  if (type !== 'TEXT' && type !== 'TEMPLATE' && !str(body.mediaAssetId)) {
+    throw new ApiError('mediaAssetId is required for media messages (upload via POST /api/files)', 400)
   }
-  if (!text && !str(body.mediaName)) throw new ApiError('Message body, media or template is required', 400)
+  if (type === 'TEMPLATE' && !str(body.templateId)) {
+    throw new ApiError('templateId is required for template messages', 400)
+  }
 
-  const message = await db.whatsAppMessage.create({
-    data: {
-      conversationId,
-      userId: user.id,
-      direction: 'OUT',
-      type,
-      body: text,
-      mediaName: str(body.mediaName),
-      templateId,
-      status: 'SENT',
-    },
+  const templateParams = Array.isArray(body.templateParams)
+    ? body.templateParams.map((p) => String(p ?? ''))
+    : undefined
+
+  let result
+  try {
+    result = await sendWhatsappMessage(
+      {
+        conversationId,
+        type: type as 'TEXT' | 'TEMPLATE' | 'IMAGE' | 'PDF' | 'VIDEO',
+        body: str(body.body),
+        mediaAssetId: str(body.mediaAssetId),
+        templateId: str(body.templateId),
+        templateParams,
+        userId: user.id,
+        leadId: conv.leadId,
+      },
+      originOf(req)
+    )
+  } catch (e) {
+    // Config/Policy guards throw ProviderError with a readable message
+    if (e instanceof Error && 'readable' in e) {
+      throw new ApiError((e as { readable: string }).readable, 422)
+    }
+    throw e
+  }
+
+  const message = await db.whatsAppMessage.findUnique({
+    where: { id: result.messageId },
     include: { user: { select: { id: true, name: true } } },
   })
-  await db.whatsAppConversation.update({
-    where: { id: conversationId },
-    data: { lastMessage: message.body ?? message.mediaName ?? null, lastMessageAt: new Date() },
-  })
 
-  if (conv.leadId) {
-    const lead = await db.lead.findUnique({ where: { id: conv.leadId }, select: { id: true, isSticky: true } })
-    const now = new Date()
-    await db.lead.update({
-      where: { id: conv.leadId },
-      data: {
-        lastContactAt: now,
-        ...(user.role === 'EXECUTIVE' && lead && !lead.isSticky ? { isSticky: true, stickySince: now } : {}),
-      },
-    })
-    await db.activity.create({
-      data: {
-        leadId: conv.leadId,
-        userId: user.id,
-        type: 'WHATSAPP',
-        title: 'WhatsApp message sent',
-        description: text ? text.slice(0, 160) : undefined,
-      },
-    })
+  if (!result.ok) {
+    // Readable, user-safe error (technical detail is in ApiLog)
+    throw new ApiError(result.error ?? 'WhatsApp message could not be sent', 422)
   }
-  return ok({ message }, 201)
+  return ok({ message, requestId: result.requestId, providerMessageId: result.providerMessageId }, 201)
 })
 
-// ---------- PATCH /api/whatsapp/messages ----------
+// ---------- PATCH /api/whatsapp/messages — mark read / assign owner ----------
 
 export const PATCH = route(async (req) => {
   const user = await requireUser()
-  const body = await readBody<{ conversationId?: string; action?: string; body?: string }>(req)
+  const body = await readBody<{ conversationId?: string; action?: string; ownerId?: string }>(req)
   const conversationId = str(body.conversationId)
   const action = str(body.action)
   if (!conversationId) throw new ApiError('conversationId is required', 400)
   const conv = await loadConversation(conversationId)
   await ensureConversationAccess(user, conv)
 
-  if (action === 'simulate_reply') {
-    const text = str(body.body) || 'Okay, noted 👍'
-    const message = await db.whatsAppMessage.create({
-      data: { conversationId, direction: 'IN', type: 'TEXT', body: text, status: 'SENT' },
-    })
-    await db.whatsAppConversation.update({
+  if (action === 'mark_read') {
+    await db.whatsAppConversation.update({ where: { id: conversationId }, data: { unreadCount: 0 } })
+    return ok({ success: true })
+  }
+
+  if (action === 'assign') {
+    if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER'].includes(user.role)) {
+      throw new ApiError('Only management can reassign conversations', 403)
+    }
+    const ownerId = str(body.ownerId)
+    if (!ownerId) throw new ApiError('ownerId is required', 400)
+    const owner = await db.user.findUnique({ where: { id: ownerId }, select: { id: true, isActive: true } })
+    if (!owner || !owner.isActive) throw new ApiError('Target agent not found or inactive', 400)
+    const updated = await db.whatsAppConversation.update({
       where: { id: conversationId },
-      data: { unreadCount: { increment: 1 }, lastMessage: text, lastMessageAt: new Date() },
+      data: { ownerId },
+      include: { owner: { select: { id: true, name: true } } },
     })
-    return ok({ message })
+    return ok({ conversation: updated })
   }
 
-  if (action === 'advance_status') {
-    const last = await db.whatsAppMessage.findFirst({
-      where: { conversationId, direction: 'OUT', status: { in: ['SENT', 'DELIVERED'] } },
-      orderBy: { createdAt: 'desc' },
-    })
-    if (!last) return ok({ updated: false })
-    const nextStatus = last.status === 'SENT' ? 'DELIVERED' : 'READ'
-    const message = await db.whatsAppMessage.update({ where: { id: last.id }, data: { status: nextStatus } })
-    return ok({ updated: true, message })
-  }
-
-  throw new ApiError('action must be simulate_reply or advance_status', 400)
+  throw new ApiError("action must be 'mark_read' or 'assign'", 400)
 })

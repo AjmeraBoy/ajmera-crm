@@ -1,0 +1,881 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useState } from 'react'
+     4→import { KeyRound, Loader2, Pencil, Plus, RefreshCw, Star, Users2 } from 'lucide-react'
+     5→import { Badge } from '@/components/ui/badge'
+     6→import { Button } from '@/components/ui/button'
+     7→import {
+     8→  Dialog,
+     9→  DialogContent,
+    10→  DialogDescription,
+    11→  DialogFooter,
+    12→  DialogHeader,
+    13→  DialogTitle,
+    14→} from '@/components/ui/dialog'
+    15→import { Input } from '@/components/ui/input'
+    16→import { Label } from '@/components/ui/label'
+    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    18→import { Switch } from '@/components/ui/switch'
+    19→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    20→import { useToast } from '@/hooks/use-toast'
+    21→import { api, qs } from '@/lib/client'
+    22→import { cn } from '@/lib/utils'
+    23→import {
+    24→  DEPARTMENTS,
+    25→  DEPT_LABELS,
+    26→  DEPT_SHORT,
+    27→  ROLES,
+    28→  ROLE_COLORS,
+    29→  ROLE_LABELS,
+    30→} from '@/lib/constants'
+    31→import { UserAvatar } from '@/components/crm/shared/avatar'
+    32→import { DataTable, type Column } from '@/components/crm/shared/data-table'
+    33→import { EmptyState } from '@/components/crm/shared/empty-state'
+    34→import { FilterBar } from '@/components/crm/shared/filter-bar'
+    35→import { PageHeader } from '@/components/crm/shared/page-header'
+    36→import { useAppStore } from '@/store/app-store'
+    37→
+    38→// ---------- types ----------
+    39→
+    40→type UserRow = {
+    41→  id: string
+    42→  name: string
+    43→  email: string
+    44→  role: string
+    45→  department: string | null
+    46→  phone: string | null
+    47→  languages: string | null
+    48→  teamId: string | null
+    49→  team: { id: string; name: string } | null
+    50→  isActive: boolean
+    51→  dailyCallTarget: number
+    52→}
+    53→
+    54→type TeamRow = {
+    55→  id: string
+    56→  name: string
+    57→  department: string
+    58→  leader: { id: string; name: string } | null
+    59→  members: { id: string; name: string; role: string }[]
+    60→}
+    61→
+    62→type ActiveFilter = 'all' | 'active' | 'inactive'
+    63→
+    64→const NONE = '__none__'
+    65→
+    66→function RoleChip({ role }: { role: string }) {
+    67→  return (
+    68→    <span className={cn('inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium', ROLE_COLORS[role] ?? 'bg-stone-100 text-stone-600')}>
+    69→      {ROLE_LABELS[role] ?? role}
+    70→    </span>
+    71→  )
+    72→}
+    73→
+    74→function DeptBadge({ dept }: { dept: string | null }) {
+    75→  if (!dept) return <span className="text-stone-400">—</span>
+    76→  return (
+    77→    <span className={cn('inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium', dept === 'ONLINE' ? 'border-sky-200 bg-sky-100 text-sky-700' : dept === 'EXPORT' ? 'border-amber-200 bg-amber-100 text-amber-700' : 'border-stone-200 bg-stone-100 text-stone-600')}>
+    78→      {DEPT_SHORT[dept] ?? dept}
+    79→    </span>
+    80→  )
+    81→}
+    82→
+    83→// ---------- main view ----------
+    84→
+    85→export default function UsersView() {
+    86→  const user = useAppStore((s) => s.user)
+    87→  const { toast } = useToast()
+    88→
+    89→  const [users, setUsers] = useState<UserRow[]>([])
+    90→  const [teams, setTeams] = useState<TeamRow[]>([])
+    91→  const [loading, setLoading] = useState(true)
+    92→  const [teamsLoading, setTeamsLoading] = useState(true)
+    93→  const [reloadKey, setReloadKey] = useState(0)
+    94→
+    95→  const [role, setRole] = useState('__all__')
+    96→  const [dept, setDept] = useState(user?.department ?? '__all__')
+    97→  const [qInput, setQInput] = useState('')
+    98→  const [q, setQ] = useState('')
+    99→  const [activeFilter, setActiveFilter] = useState<ActiveFilter>('all')
+   100→
+   101→  const [userDialogOpen, setUserDialogOpen] = useState(false)
+   102→  const [editUser, setEditUser] = useState<UserRow | null>(null)
+   103→  const [resetUser, setResetUser] = useState<UserRow | null>(null)
+   104→  const [togglingId, setTogglingId] = useState<string | null>(null)
+   105→
+   106→  const [teamDialogOpen, setTeamDialogOpen] = useState(false)
+   107→  const [editTeam, setEditTeam] = useState<TeamRow | null>(null)
+   108→  const [teamDept, setTeamDept] = useState(user?.department ?? '__all__')
+   109→
+   110→  const deptLocked = !!user?.department
+   111→
+   112→  // debounce search input
+   113→  useEffect(() => {
+   114→    const t = setTimeout(() => setQ(qInput), 400)
+   115→    return () => clearTimeout(t)
+   116→  }, [qInput])
+   117→
+   118→  const loadUsers = useCallback(async () => {
+   119→    setLoading(true)
+   120→    try {
+   121→      const res = await api<{ users: UserRow[] }>(
+   122→        `/api/users${qs({ role: role === '__all__' ? undefined : role, dept: dept === '__all__' ? undefined : dept, q: q || undefined })}`
+   123→      )
+   124→      setUsers(res.users ?? [])
+   125→    } catch (e) {
+   126→      toast({ title: 'Failed to load users', description: (e as Error).message, variant: 'destructive' })
+   127→    } finally {
+   128→      setLoading(false)
+   129→    }
+   130→  }, [role, dept, q, toast])
+   131→
+   132→  const loadTeams = useCallback(async () => {
+   133→    setTeamsLoading(true)
+   134→    try {
+   135→      const res = await api<{ teams: TeamRow[] }>(`/api/teams${qs({ dept: teamDept === '__all__' ? undefined : teamDept })}`)
+   136→      setTeams(res.teams ?? [])
+   137→    } catch (e) {
+   138→      toast({ title: 'Failed to load teams', description: (e as Error).message, variant: 'destructive' })
+   139→    } finally {
+   140→      setTeamsLoading(false)
+   141→    }
+   142→  }, [teamDept, toast])
+   143→
+   144→  useEffect(() => {
+   145→    loadUsers()
+   146→  }, [loadUsers, reloadKey])
+   147→
+   148→  useEffect(() => {
+   149→    loadTeams()
+   150→  }, [loadTeams])
+   151→
+   152→  const visibleUsers = useMemo(() => {
+   153→    if (activeFilter === 'active') return users.filter((u) => u.isActive)
+   154→    if (activeFilter === 'inactive') return users.filter((u) => !u.isActive)
+   155→    return users
+   156→  }, [users, activeFilter])
+   157→
+   158→  const toggleActive = async (u: UserRow, next: boolean) => {
+   159→    setTogglingId(u.id)
+   160→    try {
+   161→      await api('/api/users', { method: 'PATCH', body: { id: u.id, isActive: next } })
+   162→      toast({ title: next ? 'User activated' : 'User deactivated', description: `${u.name} — ${u.email}` })
+   163→      setReloadKey((k) => k + 1)
+   164→    } catch (e) {
+   165→      toast({ title: 'Update failed', description: (e as Error).message, variant: 'destructive' })
+   166→    } finally {
+   167→      setTogglingId(null)
+   168→    }
+   169→  }
+   170→
+   171→  const columns = useMemo<Column<UserRow>[]>(
+   172→    () => [
+   173→      {
+   174→        key: 'name',
+   175→        header: 'User',
+   176→        render: (u) => (
+   177→          <div className="flex items-center gap-2.5">
+   178→            <UserAvatar name={u.name} />
+   179→            <div className="min-w-0">
+   180→              <p className={cn('truncate text-sm font-medium text-stone-900', !u.isActive && 'opacity-50')}>{u.name}</p>
+   181→              <p className="text-xs text-stone-400">{ROLE_LABELS[u.role] ?? u.role}</p>
+   182→            </div>
+   183→          </div>
+   184→        ),
+   185→      },
+   186→      {
+   187→        key: 'email',
+   188→        header: 'Email',
+   189→        render: (u) => <span className="text-sm text-stone-600">{u.email}</span>,
+   190→      },
+   191→      {
+   192→        key: 'role',
+   193→        header: 'Role',
+   194→        render: (u) => <RoleChip role={u.role} />,
+   195→      },
+   196→      {
+   197→        key: 'department',
+   198→        header: 'Dept',
+   199→        render: (u) => <DeptBadge dept={u.department} />,
+   200→      },
+   201→      {
+   202→        key: 'phone',
+   203→        header: 'Phone',
+   204→        render: (u) => <span className="text-sm text-stone-600">{u.phone || <span className="text-stone-400">—</span>}</span>,
+   205→      },
+   206→      {
+   207→        key: 'languages',
+   208→        header: 'Languages',
+   209→        render: (u) => <span className="text-xs text-stone-500">{u.languages || '—'}</span>,
+   210→      },
+   211→      {
+   212→        key: 'team',
+   213→        header: 'Team',
+   214→        render: (u) => <span className="text-sm text-stone-600">{u.team?.name ?? '—'}</span>,
+   215→      },
+   216→      {
+   217→        key: 'dailyCallTarget',
+   218→        header: 'Daily Calls',
+   219→        className: 'text-center',
+   220→        render: (u) => <span className="text-sm font-medium text-stone-700">{u.dailyCallTarget}</span>,
+   221→      },
+   222→      {
+   223→        key: 'isActive',
+   224→        header: 'Active',
+   225→        render: (u) => (
+   226→          <Switch
+   227→            checked={u.isActive}
+   228→            disabled={togglingId === u.id}
+   229→            aria-label={`Toggle active for ${u.name}`}
+   230→            onCheckedChange={(v) => toggleActive(u, v)}
+   231→          />
+   232→        ),
+   233→      },
+   234→      {
+   235→        key: 'actions',
+   236→        header: 'Actions',
+   237→        className: 'text-right',
+   238→        render: (u) => (
+   239→          <div className="flex items-center justify-end gap-1">
+   240→            <Button
+   241→              variant="ghost"
+   242→              size="icon"
+   243→              className="h-8 w-8"
+   244→              title="Edit user"
+   245→              aria-label={`Edit ${u.name}`}
+   246→              onClick={() => {
+   247→                setEditUser(u)
+   248→                setUserDialogOpen(true)
+   249→              }}
+   250→            >
+   251→              <Pencil className="h-4 w-4 text-stone-500" aria-hidden />
+   252→            </Button>
+   253→            <Button
+   254→              variant="ghost"
+   255→              size="icon"
+   256→              className="h-8 w-8"
+   257→              title="Reset password"
+   258→              aria-label={`Reset password for ${u.name}`}
+   259→              onClick={() => setResetUser(u)}
+   260→            >
+   261→              <KeyRound className="h-4 w-4 text-stone-500" aria-hidden />
+   262→            </Button>
+   263→          </div>
+   264→        ),
+   265→      },
+   266→    ],
+   267→    [togglingId]
+   268→  )
+   269→
+   270→  return (
+   271→    <div>
+   272→      <PageHeader title="Users & Teams" subtitle="Manage logins, roles, departments and team structure">
+   273→        <Button
+   274→          variant="outline"
+   275→          size="sm"
+   276→          className="h-9"
+   277→          onClick={() => setReloadKey((k) => k + 1)}
+   278→        >
+   279→          <RefreshCw className="h-4 w-4" aria-hidden /> Refresh
+   280→        </Button>
+   281→        <Button
+   282→          size="sm"
+   283→          className="h-9 bg-emerald-600 text-white hover:bg-emerald-700"
+   284→          onClick={() => {
+   285→            setEditUser(null)
+   286→            setUserDialogOpen(true)
+   287→          }}
+   288→        >
+   289→          <Plus className="h-4 w-4" aria-hidden /> Add User
+   290→        </Button>
+   291→      </PageHeader>
+   292→
+   293→      <Tabs defaultValue="users" className="gap-4">
+   294→        <TabsList className="bg-white">
+   295→          <TabsTrigger value="users" className="gap-1.5 px-3">
+   296→            <Users2 className="h-4 w-4" aria-hidden /> Users
+   297→          </TabsTrigger>
+   298→          <TabsTrigger value="teams" className="gap-1.5 px-3">
+   299→            <Star className="h-4 w-4" aria-hidden /> Teams
+   300→          </TabsTrigger>
+   301→        </TabsList>
+   302→
+   303→        {/* ---------------- USERS TAB ---------------- */}
+   304→        <TabsContent value="users" className="space-y-3">
+   305→          <FilterBar>
+   306→            <div className="relative">
+   307→              <Input
+   308→                value={qInput}
+   309→                onChange={(e) => setQInput(e.target.value)}
+   310→                placeholder="Search name or email…"
+   311→                className="h-9 w-full min-w-[200px] bg-white sm:w-56"
+   312→                aria-label="Search users"
+   313→              />
+   314→            </div>
+   315→            <Select value={role} onValueChange={setRole}>
+   316→              <SelectTrigger className="h-9 w-full bg-white sm:w-44" aria-label="Filter by role">
+   317→                <SelectValue placeholder="All roles" />
+   318→              </SelectTrigger>
+   319→              <SelectContent>
+   320→                <SelectItem value="__all__">All roles</SelectItem>
+   321→                {ROLES.map((r) => (
+   322→                  <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+   323→                ))}
+   324→              </SelectContent>
+   325→            </Select>
+   326→            <Select value={dept} onValueChange={setDept} disabled={deptLocked}>
+   327→              <SelectTrigger className="h-9 w-full bg-white sm:w-44" aria-label="Filter by department">
+   328→                <SelectValue placeholder="All departments" />
+   329→              </SelectTrigger>
+   330→              <SelectContent>
+   331→                <SelectItem value="__all__">All departments</SelectItem>
+   332→                {DEPARTMENTS.map((d) => (
+   333→                  <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   334→                ))}
+   335→              </SelectContent>
+   336→            </Select>
+   337→            <Select value={activeFilter} onValueChange={(v) => setActiveFilter(v as ActiveFilter)}>
+   338→              <SelectTrigger className="h-9 w-full bg-white sm:w-40" aria-label="Filter by active status">
+   339→                <SelectValue />
+   340→              </SelectTrigger>
+   341→              <SelectContent>
+   342→                <SelectItem value="all">All statuses</SelectItem>
+   343→                <SelectItem value="active">Active only</SelectItem>
+   344→                <SelectItem value="inactive">Inactive only</SelectItem>
+   345→              </SelectContent>
+   346→            </Select>
+   347→          </FilterBar>
+   348→
+   349→          <DataTable
+   350→            columns={columns}
+   351→            rows={visibleUsers}
+   352→            loading={loading}
+   353→            emptyMessage="No users match the current filters"
+   354→            maxH="max-h-[620px]"
+   355→          />
+   356→          <p className="text-xs text-stone-500">
+   357→            Showing {visibleUsers.length} of {users.length} user(s)
+   358→          </p>
+   359→        </TabsContent>
+   360→
+   361→        {/* ---------------- TEAMS TAB ---------------- */}
+   362→        <TabsContent value="teams" className="space-y-4">
+   363→          <div className="flex flex-wrap items-center justify-between gap-2">
+   364→            <Select value={teamDept} onValueChange={setTeamDept} disabled={deptLocked}>
+   365→              <SelectTrigger className="h-9 w-full bg-white sm:w-48" aria-label="Filter teams by department">
+   366→                <SelectValue placeholder="All departments" />
+   367→              </SelectTrigger>
+   368→              <SelectContent>
+   369→                <SelectItem value="__all__">All departments</SelectItem>
+   370→                {DEPARTMENTS.map((d) => (
+   371→                  <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   372→                ))}
+   373→              </SelectContent>
+   374→            </Select>
+   375→            <Button
+   376→              size="sm"
+   377→              className="h-9 bg-emerald-600 text-white hover:bg-emerald-700"
+   378→              onClick={() => {
+   379→                setEditTeam(null)
+   380→                setTeamDialogOpen(true)
+   381→              }}
+   382→            >
+   383→              <Plus className="h-4 w-4" aria-hidden /> Add Team
+   384→            </Button>
+   385→          </div>
+   386→
+   387→          {teamsLoading ? (
+   388→            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+   389→              {Array.from({ length: 3 }).map((_, i) => (
+   390→                <div key={`sk-team-${i}`} className="h-44 animate-pulse rounded-xl border border-stone-200 bg-white" />
+   391→              ))}
+   392→            </div>
+   393→          ) : teams.length === 0 ? (
+   394→            <EmptyState
+   395→              icon={Users2}
+   396→              title="No teams yet"
+   397→              subtitle="Create teams to group executives and assign team-level targets."
+   398→              action={
+   399→                <Button
+   400→                  size="sm"
+   401→                  className="bg-emerald-600 text-white hover:bg-emerald-700"
+   402→                  onClick={() => {
+   403→                    setEditTeam(null)
+   404→                    setTeamDialogOpen(true)
+   405→                  }}
+   406→                >
+   407→                  <Plus className="h-4 w-4" aria-hidden /> Add Team
+   408→                </Button>
+   409→              }
+   410→            />
+   411→          ) : (
+   412→            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+   413→              {teams.map((t) => (
+   414→                <div key={t.id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+   415→                  <div className="flex items-start justify-between gap-2">
+   416→                    <div className="min-w-0">
+   417→                      <h3 className="truncate text-sm font-semibold text-stone-900">{t.name}</h3>
+   418→                      <div className="mt-1">
+   419→                        <DeptBadge dept={t.department} />
+   420→                      </div>
+   421→                    </div>
+   422→                    <Button
+   423→                      variant="ghost"
+   424→                      size="icon"
+   425→                      className="h-8 w-8 shrink-0"
+   426→                      title="Edit team"
+   427→                      aria-label={`Edit team ${t.name}`}
+   428→                      onClick={() => {
+   429→                        setEditTeam(t)
+   430→                        setTeamDialogOpen(true)
+   431→                      }}
+   432→                    >
+   433→                      <Pencil className="h-4 w-4 text-stone-500" aria-hidden />
+   434→                    </Button>
+   435→                  </div>
+   436→                  <div className="mt-3 flex items-center gap-2 border-t border-stone-100 pt-3">
+   437→                    <Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" aria-hidden />
+   438→                    {t.leader ? (
+   439→                      <span className="truncate text-sm text-stone-700">
+   440→                        <span className="font-medium">{t.leader.name}</span> <span className="text-xs text-stone-400">— Team Leader</span>
+   441→                      </span>
+   442→                    ) : (
+   443→                      <span className="text-sm text-stone-400">No leader assigned</span>
+   444→                    )}
+   445→                  </div>
+   446→                  <div className="mt-3">
+   447→                    <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Members ({t.members.length})</p>
+   448→                    <div className="mt-1.5 flex items-center gap-2">
+   449→                      <div className="flex -space-x-2">
+   450→                        {t.members.slice(0, 5).map((m) => (
+   451→                          <UserAvatar key={m.id} name={m.name} className="h-7 w-7 border-2 border-white text-[10px]" />
+   452→                        ))}
+   453→                        {t.members.length > 5 ? (
+   454→                          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-stone-100 text-[10px] font-semibold text-stone-600">
+   455→                            +{t.members.length - 5}
+   456→                          </span>
+   457→                        ) : null}
+   458→                      </div>
+   459→                      <p className="truncate text-xs text-stone-500" title={t.members.map((m) => m.name).join(', ')}>
+   460→                        {t.members.map((m) => m.name).join(', ') || 'No members'}
+   461→                      </p>
+   462→                    </div>
+   463→                  </div>
+   464→                </div>
+   465→              ))}
+   466→            </div>
+   467→          )}
+   468→        </TabsContent>
+   469→      </Tabs>
+   470→
+   471→      {/* add / edit user dialog */}
+   472→      <UserDialog
+   473→        open={userDialogOpen}
+   474→        onOpenChange={setUserDialogOpen}
+   475→        user={editUser}
+   476→        onSaved={() => setReloadKey((k) => k + 1)}
+   477→      />
+   478→
+   479→      {/* reset password dialog */}
+   480→      <ResetPasswordDialog user={resetUser} onClose={() => setResetUser(null)} />
+   481→
+   482→      {/* add / edit team dialog */}
+   483→      <TeamDialog
+   484→        open={teamDialogOpen}
+   485→        onOpenChange={setTeamDialogOpen}
+   486→        team={editTeam}
+   487→        defaultDept={deptLocked ? (user?.department ?? 'ONLINE') : teamDept === '__all__' ? 'ONLINE' : teamDept}
+   488→        onSaved={() => {
+   489→          setReloadKey((k) => k + 1)
+   490→          loadTeams()
+   491→        }}
+   492→      />
+   493→    </div>
+   494→  )
+   495→}
+   496→
+   497→// ---------- user form dialog ----------
+   498→
+   499→function UserDialog({
+   500→  open,
+   501→  onOpenChange,
+   502→  user,
+   503→  onSaved,
+   504→}: {
+   505→  open: boolean
+   506→  onOpenChange: (open: boolean) => void
+   507→  user: UserRow | null
+   508→  onSaved: () => void
+   509→}) {
+   510→  const { toast } = useToast()
+   511→  const isEdit = !!user
+   512→  const [teams, setTeams] = useState<TeamRow[]>([])
+   513→  const [form, setForm] = useState({
+   514→    name: '',
+   515→    email: '',
+   516→    password: '',
+   517→    role: 'EXECUTIVE',
+   518→    dept: NONE,
+   519→    phone: '',
+   520→    languages: '',
+   521→    teamId: NONE,
+   522→    dailyCallTarget: '60',
+   523→  })
+   524→  const [saving, setSaving] = useState(false)
+   525→  const [error, setError] = useState('')
+   526→
+   527→  useEffect(() => {
+   528→    if (!open) return
+   529→    setError('')
+   530→    setForm(
+   531→      user
+   532→        ? {
+   533→            name: user.name,
+   534→            email: user.email,
+   535→            password: '',
+   536→            role: user.role,
+   537→            dept: user.department ?? NONE,
+   538→            phone: user.phone ?? '',
+   539→            languages: user.languages ?? '',
+   540→            teamId: user.teamId ?? NONE,
+   541→            dailyCallTarget: String(user.dailyCallTarget ?? 60),
+   542→          }
+   543→        : { name: '', email: '', password: '', role: 'EXECUTIVE', dept: NONE, phone: '', languages: '', teamId: NONE, dailyCallTarget: '60' }
+   544→    )
+   545→  }, [open, user])
+   546→
+   547→  useEffect(() => {
+   548→    if (!open) return
+   549→    api<{ teams: TeamRow[] }>('/api/teams')
+   550→      .then((res) => setTeams(res.teams ?? []))
+   551→      .catch(() => setTeams([]))
+   552→  }, [open])
+   553→
+   554→  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }))
+   555→
+   556→  const submit = async () => {
+   557→    setError('')
+   558→    if (!form.name.trim() || !form.email.trim() || (!isEdit && !form.password) || !form.role) {
+   559→      setError('Name, email, role and password (on create) are required.')
+   560→      return
+   561→    }
+   562→    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) {
+   563→      setError('Please enter a valid email address.')
+   564→      return
+   565→    }
+   566→    setSaving(true)
+   567→    try {
+   568→      const body: Record<string, unknown> = {
+   569→        name: form.name.trim(),
+   570→        email: form.email.trim().toLowerCase(),
+   571→        role: form.role,
+   572→        department: form.dept === NONE ? null : form.dept,
+   573→        phone: form.phone.trim() || null,
+   574→        languages: form.languages.trim() || null,
+   575→        teamId: form.teamId === NONE ? null : form.teamId,
+   576→        dailyCallTarget: Number(form.dailyCallTarget) || 60,
+   577→      }
+   578→      if (isEdit) {
+   579→        if (form.password) body.password = form.password
+   580→        await api('/api/users', { method: 'PATCH', body: { id: user.id, ...body } })
+   581→        toast({ title: 'User updated', description: `${form.name} saved successfully.` })
+   582→      } else {
+   583→        body.password = form.password
+   584→        await api('/api/users', { method: 'POST', body })
+   585→        toast({ title: 'User created', description: `${form.name} can now log in.` })
+   586→      }
+   587→      onSaved()
+   588→      onOpenChange(false)
+   589→    } catch (e) {
+   590→      setError((e as Error).message)
+   591→      toast({ title: isEdit ? 'Update failed' : 'Create failed', description: (e as Error).message, variant: 'destructive' })
+   592→    } finally {
+   593→      setSaving(false)
+   594→    }
+   595→  }
+   596→
+   597→  return (
+   598→    <Dialog open={open} onOpenChange={(o) => { if (!saving) onOpenChange(o) }}>
+   599→      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
+   600→        <DialogHeader>
+   601→          <DialogTitle>{isEdit ? `Edit User — ${user.name}` : 'Add User'}</DialogTitle>
+   602→          <DialogDescription>
+   603→            {isEdit ? 'Leave password blank to keep the current password.' : 'Create a login for a team member. Share the password securely.'}
+   604→          </DialogDescription>
+   605→        </DialogHeader>
+   606→        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+   607→          <div className="space-y-1.5">
+   608→            <Label>Name *</Label>
+   609→            <Input value={form.name} onChange={(e) => set('name', e.target.value)} disabled={saving} placeholder="Full name" />
+   610→          </div>
+   611→          <div className="space-y-1.5">
+   612→            <Label>Email *</Label>
+   613→            <Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} disabled={saving} placeholder="name@ajmera.com" />
+   614→          </div>
+   615→          <div className="space-y-1.5">
+   616→            <Label>{isEdit ? 'New Password (optional)' : 'Password *'}</Label>
+   617→            <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} disabled={saving} placeholder={isEdit ? 'Leave blank = unchanged' : 'Min 6 characters'} />
+   618→          </div>
+   619→          <div className="space-y-1.5">
+   620→            <Label>Role *</Label>
+   621→            <Select value={form.role} onValueChange={(v) => set('role', v)} disabled={saving}>
+   622→              <SelectTrigger aria-label="Role"><SelectValue /></SelectTrigger>
+   623→              <SelectContent>
+   624→                {ROLES.map((r) => (
+   625→                  <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+   626→                ))}
+   627→              </SelectContent>
+   628→            </Select>
+   629→          </div>
+   630→          <div className="space-y-1.5">
+   631→            <Label>Department</Label>
+   632→            <Select value={form.dept} onValueChange={(v) => set('dept', v)} disabled={saving}>
+   633→              <SelectTrigger aria-label="Department"><SelectValue /></SelectTrigger>
+   634→              <SelectContent>
+   635→                <SelectItem value={NONE}>None</SelectItem>
+   636→                {DEPARTMENTS.map((d) => (
+   637→                  <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   638→                ))}
+   639→              </SelectContent>
+   640→            </Select>
+   641→          </div>
+   642→          <div className="space-y-1.5">
+   643→            <Label>Team</Label>
+   644→            <Select value={form.teamId} onValueChange={(v) => set('teamId', v)} disabled={saving}>
+   645→              <SelectTrigger aria-label="Team"><SelectValue /></SelectTrigger>
+   646→              <SelectContent>
+   647→                <SelectItem value={NONE}>No team</SelectItem>
+   648→                {teams.map((t) => (
+   649→                  <SelectItem key={t.id} value={t.id}>{t.name} ({DEPT_SHORT[t.department] ?? t.department})</SelectItem>
+   650→                ))}
+   651→              </SelectContent>
+   652→            </Select>
+   653→          </div>
+   654→          <div className="space-y-1.5">
+   655→            <Label>Phone</Label>
+   656→            <Input value={form.phone} onChange={(e) => set('phone', e.target.value)} disabled={saving} placeholder="+91…" />
+   657→          </div>
+   658→          <div className="space-y-1.5">
+   659→            <Label>Daily Call Target</Label>
+   660→            <Input type="number" min={0} value={form.dailyCallTarget} onChange={(e) => set('dailyCallTarget', e.target.value)} disabled={saving} />
+   661→          </div>
+   662→          <div className="space-y-1.5 sm:col-span-2">
+   663→            <Label>Languages</Label>
+   664→            <Input value={form.languages} onChange={(e) => set('languages', e.target.value)} disabled={saving} placeholder="English, Hindi, Gujarati" />
+   665→            <p className="text-[11px] text-stone-400">Comma separated list of languages the user speaks.</p>
+   666→          </div>
+   667→        </div>
+   668→        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
+   669→        <DialogFooter className="gap-2">
+   670→          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancel</Button>
+   671→          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={saving} onClick={submit}>
+   672→            {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   673→            {isEdit ? 'Save Changes' : 'Create User'}
+   674→          </Button>
+   675→        </DialogFooter>
+   676→      </DialogContent>
+   677→    </Dialog>
+   678→  )
+   679→}
+   680→
+   681→// ---------- reset password dialog ----------
+   682→
+   683→function ResetPasswordDialog({ user, onClose }: { user: UserRow | null; onClose: () => void }) {
+   684→  const { toast } = useToast()
+   685→  const [password, setPassword] = useState('')
+   686→  const [saving, setSaving] = useState(false)
+   687→  const [error, setError] = useState('')
+   688→
+   689→  useEffect(() => {
+   690→    if (user) {
+   691→      setPassword('')
+   692→      setError('')
+   693→    }
+   694→  }, [user])
+   695→
+   696→  const submit = async () => {
+   697→    if (!user) return
+   698→    if (password.length < 6) {
+   699→      setError('Password must be at least 6 characters.')
+   700→      return
+   701→    }
+   702→    setSaving(true)
+   703→    try {
+   704→      await api('/api/users', { method: 'PATCH', body: { id: user.id, password } })
+   705→      toast({ title: 'Password reset', description: `New password set for ${user.name}.` })
+   706→      onClose()
+   707→    } catch (e) {
+   708→      setError((e as Error).message)
+   709→      toast({ title: 'Password reset failed', description: (e as Error).message, variant: 'destructive' })
+   710→    } finally {
+   711→      setSaving(false)
+   712→    }
+   713→  }
+   714→
+   715→  return (
+   716→    <Dialog open={!!user} onOpenChange={(o) => { if (!saving && !o) onClose() }}>
+   717→      <DialogContent className="sm:max-w-sm">
+   718→        <DialogHeader>
+   719→          <DialogTitle>Reset Password</DialogTitle>
+   720→          <DialogDescription>
+   721→            Set a new password for <span className="font-medium text-stone-700">{user?.name}</span> ({user?.email}).
+   722→          </DialogDescription>
+   723→        </DialogHeader>
+   724→        <div className="space-y-1.5">
+   725→          <Label>New Password *</Label>
+   726→          <Input
+   727→            type="password"
+   728→            value={password}
+   729→            onChange={(e) => setPassword(e.target.value)}
+   730→            disabled={saving}
+   731→            placeholder="Min 6 characters"
+   732→            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+   733→          />
+   734→          {error ? <p className="text-xs text-rose-600">{error}</p> : null}
+   735→        </div>
+   736→        <DialogFooter className="gap-2">
+   737→          <Button variant="outline" disabled={saving} onClick={onClose}>Cancel</Button>
+   738→          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={saving || !password} onClick={submit}>
+   739→            {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   740→            Reset Password
+   741→          </Button>
+   742→        </DialogFooter>
+   743→      </DialogContent>
+   744→    </Dialog>
+   745→  )
+   746→}
+   747→
+   748→// ---------- team form dialog ----------
+   749→
+   750→function TeamDialog({
+   751→  open,
+   752→  onOpenChange,
+   753→  team,
+   754→  defaultDept,
+   755→  onSaved,
+   756→}: {
+   757→  open: boolean
+   758→  onOpenChange: (open: boolean) => void
+   759→  team: TeamRow | null
+   760→  defaultDept: string
+   761→  onSaved: () => void
+   762→}) {
+   763→  const { toast } = useToast()
+   764→  const isEdit = !!team
+   765→  const [name, setName] = useState('')
+   766→  const [dept, setDept] = useState('ONLINE')
+   767→  const [leaderId, setLeaderId] = useState(NONE)
+   768→  const [leaders, setLeaders] = useState<{ id: string; name: string; role: string }[]>([])
+   769→  const [saving, setSaving] = useState(false)
+   770→  const [error, setError] = useState('')
+   771→
+   772→  useEffect(() => {
+   773→    if (!open) return
+   774→    setError('')
+   775→    setName(team?.name ?? '')
+   776→    setDept(team?.department ?? defaultDept ?? 'ONLINE')
+   777→    setLeaderId(team?.leader?.id ?? NONE)
+   778→  }, [open, team, defaultDept])
+   779→
+   780→  // load candidate leaders (TEAM_LEADER / MANAGER of the chosen department)
+   781→  useEffect(() => {
+   782→    if (!open || !dept) {
+   783→      setLeaders([])
+   784→      return
+   785→    }
+   786→    let cancelled = false
+   787→    api<{ users: { id: string; name: string; role: string }[] }>(`/api/users${qs({ dept, active: 1 })}`)
+   788→      .then((res) => {
+   789→        if (cancelled) return
+   790→        const opts = (res.users ?? []).filter((u) => u.role === 'TEAM_LEADER' || u.role === 'MANAGER')
+   791→        if (team?.leader && !opts.some((o) => o.id === team.leader?.id)) {
+   792→          opts.unshift({ id: team.leader.id, name: team.leader.name, role: 'TEAM_LEADER' })
+   793→        }
+   794→        setLeaders(opts)
+   795→      })
+   796→      .catch(() => { if (!cancelled) setLeaders([]) })
+   797→    return () => { cancelled = true }
+   798→  }, [open, dept, team])
+   799→
+   800→  const submit = async () => {
+   801→    setError('')
+   802→    if (!name.trim()) {
+   803→      setError('Team name is required.')
+   804→      return
+   805→    }
+   806→    setSaving(true)
+   807→    try {
+   808→      if (isEdit) {
+   809→        await api('/api/teams', {
+   810→          method: 'PATCH',
+   811→          body: { id: team.id, name: name.trim(), leaderId: leaderId === NONE ? null : leaderId },
+   812→        })
+   813→        toast({ title: 'Team updated', description: `${name} saved.` })
+   814→      } else {
+   815→        await api('/api/teams', {
+   816→          method: 'POST',
+   817→          body: { name: name.trim(), department: dept, leaderId: leaderId === NONE ? null : leaderId },
+   818→        })
+   819→        toast({ title: 'Team created', description: `${name} is ready for members.` })
+   820→      }
+   821→      onSaved()
+   822→      onOpenChange(false)
+   823→    } catch (e) {
+   824→      setError((e as Error).message)
+   825→      toast({ title: isEdit ? 'Update failed' : 'Create failed', description: (e as Error).message, variant: 'destructive' })
+   826→    } finally {
+   827→      setSaving(false)
+   828→    }
+   829→  }
+   830→
+   831→  return (
+   832→    <Dialog open={open} onOpenChange={(o) => { if (!saving) onOpenChange(o) }}>
+   833→      <DialogContent className="sm:max-w-md">
+   834→        <DialogHeader>
+   835→          <DialogTitle>{isEdit ? `Edit Team — ${team.name}` : 'Add Team'}</DialogTitle>
+   836→          <DialogDescription>Teams group executives for assignment, targets and performance views.</DialogDescription>
+   837→        </DialogHeader>
+   838→        <div className="space-y-3">
+   839→          <div className="space-y-1.5">
+   840→            <Label>Team Name *</Label>
+   841→            <Input value={name} onChange={(e) => setName(e.target.value)} disabled={saving} placeholder="e.g. Export — Team A" />
+   842→          </div>
+   843→          <div className="space-y-1.5">
+   844→            <Label>Department *</Label>
+   845→            <Select value={dept} onValueChange={setDept} disabled={saving || isEdit}>
+   846→              <SelectTrigger aria-label="Team department"><SelectValue /></SelectTrigger>
+   847→              <SelectContent>
+   848→                {DEPARTMENTS.map((d) => (
+   849→                  <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   850→                ))}
+   851→              </SelectContent>
+   852→            </Select>
+   853→            {isEdit ? <p className="text-[11px] text-stone-400">Department cannot be changed after creation.</p> : null}
+   854→          </div>
+   855→          <div className="space-y-1.5">
+   856→            <Label>Team Leader</Label>
+   857→            <Select value={leaderId} onValueChange={setLeaderId} disabled={saving}>
+   858→              <SelectTrigger aria-label="Team leader"><SelectValue placeholder="Select leader" /></SelectTrigger>
+   859→              <SelectContent>
+   860→                <SelectItem value={NONE}>No leader</SelectItem>
+   861→                {leaders.map((l) => (
+   862→                  <SelectItem key={l.id} value={l.id}>{l.name} ({ROLE_LABELS[l.role] ?? l.role})</SelectItem>
+   863→                ))}
+   864→              </SelectContent>
+   865→            </Select>
+   866→            <p className="text-[11px] text-stone-400">Team Leaders and Managers of the selected department.</p>
+   867→          </div>
+   868→          {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
+   869→        </div>
+   870→        <DialogFooter className="gap-2">
+   871→          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancel</Button>
+   872→          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={saving || !name.trim()} onClick={submit}>
+   873→            {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   874→            {isEdit ? 'Save Changes' : 'Create Team'}
+   875→          </Button>
+   876→        </DialogFooter>
+   877→      </DialogContent>
+   878→    </Dialog>
+   879→  )
+   880→}
+   881→

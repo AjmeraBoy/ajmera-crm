@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { Loader2 } from 'lucide-react'
 import { api } from '@/lib/client'
+import { toast } from '@/hooks/use-toast'
 import type { MasterItemDTO, UserInfo } from '@/types/crm'
 import { useAppStore } from '@/store/app-store'
 import Sidebar from '@/components/crm/shell/sidebar'
@@ -17,6 +18,13 @@ import DialerView from '@/components/crm/comms/dialer-view'
 import WhatsAppView from '@/components/crm/comms/whatsapp-view'
 import BroadcastView from '@/components/crm/comms/broadcast-view'
 import MeetingsView from '@/components/crm/comms/meetings-view'
+import CommunicationHealthView from '@/components/crm/comms/communication-health-view'
+import TemplatesView from '@/components/crm/comms/templates-view'
+import AutomationsView from '@/components/crm/comms/automations-view'
+import ApiLogsView from '@/components/crm/comms/api-logs-view'
+import WhatsAppSettingsView from '@/components/crm/comms/whatsapp-settings-view'
+import SipSettingsView from '@/components/crm/comms/sip-settings-view'
+import IncomingCallPopup from '@/components/crm/comms/incoming-call-popup'
 import CampaignsView from '@/components/crm/marketing/campaigns-view'
 import ProductsView from '@/components/crm/sales/products-view'
 import QuotationsView from '@/components/crm/sales/quotations-view'
@@ -42,6 +50,12 @@ const VIEW_MAP: Record<string, ComponentType> = {
   whatsapp: WhatsAppView,
   broadcast: BroadcastView,
   meetings: MeetingsView,
+  'comm-health': CommunicationHealthView,
+  'wa-templates': TemplatesView,
+  automations: AutomationsView,
+  'api-logs': ApiLogsView,
+  'comm-whatsapp': WhatsAppSettingsView,
+  'comm-sip': SipSettingsView,
   campaigns: CampaignsView,
   products: ProductsView,
   quotations: QuotationsView,
@@ -89,7 +103,19 @@ export default function CrmApp() {
   const setMasters = useAppStore((s) => s.setMasters)
   const setUnread = useAppStore((s) => s.setUnread)
   const setUser = useAppStore((s) => s.setUser)
+  const setView = useAppStore((s) => s.setView)
   const [booting, setBooting] = useState(true)
+
+  // Real-time session can be revoked server-side — force a clean re-login
+  useEffect(() => {
+    const onAuthError = () => {
+      setUser(null)
+      setView('dashboard')
+      toast({ title: 'Session expired', description: 'Please sign in again to continue.' })
+    }
+    window.addEventListener('crm:auth-error', onAuthError)
+    return () => window.removeEventListener('crm:auth-error', onAuthError)
+  }, [setUser, setView])
 
   // Restore the session on page refresh (silent /api/auth/me check)
   useEffect(() => {
@@ -168,6 +194,8 @@ export default function CrmApp() {
           <p>All amounts in ₹ INR</p>
         </footer>
       </div>
+      {/* global real-time call popup + toast pump */}
+      <IncomingCallPopup />
     </div>
   )
 }

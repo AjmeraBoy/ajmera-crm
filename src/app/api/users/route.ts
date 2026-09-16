@@ -13,6 +13,7 @@ const USER_SELECT = {
   teamId: true,
   isActive: true,
   dailyCallTarget: true,
+  sipExtension: true,
   team: { select: { id: true, name: true } },
 } as const
 
@@ -28,6 +29,7 @@ type UserBody = {
   teamId?: string | null
   dailyCallTarget?: number
   isActive?: boolean
+  sipExtension?: string | null
 }
 
 export const GET = route(async (req) => {
@@ -103,6 +105,7 @@ export const PATCH = route(async (req) => {
   if (body.teamId !== undefined) data.teamId = body.teamId
   if (body.dailyCallTarget !== undefined) data.dailyCallTarget = body.dailyCallTarget
   if (body.isActive !== undefined) data.isActive = body.isActive
+  if (body.sipExtension !== undefined) data.sipExtension = body.sipExtension === null || String(body.sipExtension).trim() === '' ? null : String(body.sipExtension).trim()
   const user = await db.user.update({ where: { id: body.id }, data, select: USER_SELECT })
   await audit(actor, 'USER_UPDATE', 'User', user.id, { fields: Object.keys(data) })
   return ok({ user })

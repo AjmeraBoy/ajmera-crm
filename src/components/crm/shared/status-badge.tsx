@@ -71,6 +71,62 @@ const COLOR_MAPS: Record<string, Record<string, string>> = {
     ONLINE: 'bg-sky-100 text-sky-700 border-sky-200',
     EXPORT: 'bg-amber-100 text-amber-700 border-amber-200',
   },
+  callStatus: {
+    QUEUED: 'bg-amber-100 text-amber-700 border-amber-200',
+    RINGING: 'bg-sky-100 text-sky-700 border-sky-200',
+    IN_PROGRESS: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    ON_HOLD: 'bg-stone-100 text-stone-600 border-stone-200',
+    COMPLETED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    FAILED: 'bg-rose-100 text-rose-700 border-rose-200',
+    MISSED: 'bg-red-200 text-red-800 border-red-300',
+  },
+  conn: {
+    CONNECTED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    ACTIVE: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    ERROR: 'bg-rose-100 text-rose-700 border-rose-200',
+    FAILED: 'bg-rose-100 text-rose-700 border-rose-200',
+    NOT_CONNECTED: 'bg-stone-100 text-stone-600 border-stone-200',
+    INACTIVE: 'bg-stone-100 text-stone-600 border-stone-200',
+    UNKNOWN: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
+  waStatus: {
+    AVAILABLE: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    NOT_AVAILABLE: 'bg-rose-100 text-rose-700 border-rose-200',
+    UNKNOWN: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
+  optIn: {
+    OPTED_IN: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    NOT_OPTED_IN: 'bg-rose-100 text-rose-700 border-rose-200',
+    UNKNOWN: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
+  proc: {
+    PROCESSED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    DUPLICATE: 'bg-amber-100 text-amber-700 border-amber-200',
+    RECEIVED: 'bg-sky-100 text-sky-700 border-sky-200',
+    UNRECOGNIZED: 'bg-stone-100 text-stone-600 border-stone-200',
+    FAILED: 'bg-rose-100 text-rose-700 border-rose-200',
+  },
+  tplStatus: {
+    APPROVED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    PENDING: 'bg-amber-100 text-amber-700 border-amber-200',
+    REJECTED: 'bg-rose-100 text-rose-700 border-rose-200',
+    DISABLED: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
+  autoStatus: {
+    SUCCESS: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    FAILED: 'bg-rose-100 text-rose-700 border-rose-200',
+    SKIPPED: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
+  errType: {
+    AUTH: 'bg-rose-100 text-rose-700 border-rose-200',
+    RATE_LIMIT: 'bg-amber-100 text-amber-700 border-amber-200',
+    VALIDATION: 'bg-amber-100 text-amber-700 border-amber-200',
+    NOT_FOUND: 'bg-stone-100 text-stone-600 border-stone-200',
+    SERVER: 'bg-rose-100 text-rose-700 border-rose-200',
+    NETWORK: 'bg-orange-100 text-orange-700 border-orange-200',
+    TIMEOUT: 'bg-orange-100 text-orange-700 border-orange-200',
+    UNKNOWN: 'bg-stone-100 text-stone-600 border-stone-200',
+  },
 }
 
 export type StatusBadgeVariant = keyof typeof COLOR_MAPS

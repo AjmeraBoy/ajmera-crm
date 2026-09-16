@@ -151,6 +151,10 @@ export type ViewId =
   | 'whatsapp'
   | 'broadcast'
   | 'meetings'
+  | 'comm-health'
+  | 'wa-templates'
+  | 'automations'
+  | 'api-logs'
   | 'products'
   | 'quotations'
   | 'orders'
@@ -165,6 +169,8 @@ export type ViewId =
   | 'reports'
   | 'notifications'
   | 'settings'
+  | 'comm-whatsapp'
+  | 'comm-sip'
 
 export type NavItem = {
   id: ViewId
@@ -183,6 +189,9 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'whatsapp', label: 'WhatsApp Chat', icon: 'MessageCircle', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'EXECUTIVE'], group: 'Communication' },
   { id: 'broadcast', label: 'Broadcast & Campaigns', icon: 'Megaphone', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER'], group: 'Communication' },
   { id: 'meetings', label: 'Video Consultations', icon: 'Video', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'EXECUTIVE'], group: 'Communication' },
+  { id: 'wa-templates', label: 'WhatsApp Templates', icon: 'LayoutTemplate', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Communication' },
+  { id: 'automations', label: 'Automations', icon: 'Workflow', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Communication' },
+  { id: 'api-logs', label: 'API Logs', icon: 'FileStack', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Communication' },
   { id: 'products', label: 'Products & Catalog', icon: 'Package', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'EXECUTIVE', 'VIEWER'], group: 'Sales' },
   { id: 'quotations', label: 'Quotations', icon: 'FileText', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'EXECUTIVE', 'ACCOUNTS', 'VIEWER'], group: 'Sales' },
   { id: 'orders', label: 'Sales Orders', icon: 'ShoppingCart', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'EXECUTIVE', 'ACCOUNTS', 'VIEWER'], group: 'Sales' },
@@ -190,11 +199,14 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'dispatch', label: 'Dispatch & Shipment', icon: 'Truck', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'DISPATCH', 'ACCOUNTS', 'VIEWER'], group: 'Operations' },
   { id: 'tickets', label: 'Support Tickets', icon: 'LifeBuoy', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'SUPPORT', 'TEAM_LEADER', 'EXECUTIVE', 'VIEWER'], group: 'Operations' },
   { id: 'reports', label: 'Reports & Analytics', icon: 'BarChart3', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER', 'ACCOUNTS', 'VIEWER'], group: 'Overview' },
+  { id: 'comm-health', label: 'Communication Health', icon: 'HeartPulse', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER'], group: 'Overview' },
   { id: 'masters', label: 'Master Data', icon: 'Database', roles: ['SUPER_ADMIN', 'ADMIN'], group: 'Administration' },
   { id: 'users', label: 'Users & Teams', icon: 'UserCog', roles: ['SUPER_ADMIN', 'ADMIN'], group: 'Administration' },
   { id: 'targets', label: 'Targets', icon: 'Target', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEADER'], group: 'Administration' },
   { id: 'audit', label: 'Audit Logs', icon: 'ScrollText', roles: ['SUPER_ADMIN', 'ADMIN'], group: 'Administration' },
   { id: 'settings', label: 'Settings', icon: 'Settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Administration' },
+  { id: 'comm-whatsapp', label: 'WhatsApp API', icon: 'MessageSquareDot', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Administration' },
+  { id: 'comm-sip', label: 'SIP / Dialer', icon: 'PhoneCall', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'], group: 'Administration' },
 ]
 
 export function navForRoles(role: string): NavItem[] {

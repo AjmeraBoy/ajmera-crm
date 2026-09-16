@@ -1,0 +1,1126 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     4→import {
+     5→  CalendarClock,
+     6→  ExternalLink,
+     7→  Loader2,
+     8→  Phone,
+     9→  PhoneCall,
+    10→  PhoneIncoming,
+    11→  PhoneMissed,
+    12→  PhoneOff,
+    13→  Pin,
+    14→  RefreshCw,
+    15→  Timer,
+    16→} from 'lucide-react'
+    17→import { Badge } from '@/components/ui/badge'
+    18→import { Button } from '@/components/ui/button'
+    19→import {
+    20→  Dialog,
+    21→  DialogContent,
+    22→  DialogDescription,
+    23→  DialogFooter,
+    24→  DialogHeader,
+    25→  DialogTitle,
+    26→} from '@/components/ui/dialog'
+    27→import { Input } from '@/components/ui/input'
+    28→import { Label } from '@/components/ui/label'
+    29→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    30→import { Skeleton } from '@/components/ui/skeleton'
+    31→import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    32→import { Textarea } from '@/components/ui/textarea'
+    33→import { useToast } from '@/hooks/use-toast'
+    34→import { api, qs } from '@/lib/client'
+    35→import { formatDateTime, formatDuration, formatINR, timeAgo } from '@/lib/format'
+    36→import { cn } from '@/lib/utils'
+    37→import { PAYMENT_MODES, PAYMENT_MODE_LABELS } from '@/lib/constants'
+    38→import { dispositionExtra, useAppStore } from '@/store/app-store'
+    39→import { PageHeader } from '@/components/crm/shared/page-header'
+    40→import { KpiCard } from '@/components/crm/shared/kpi-card'
+    41→import { StatusBadge } from '@/components/crm/shared/status-badge'
+    42→import { EmptyState } from '@/components/crm/shared/empty-state'
+    43→import { UserAvatar } from '@/components/crm/shared/avatar'
+    44→import { DataTable, type Column } from '@/components/crm/shared/data-table'
+    45→import { useMasters } from '@/components/crm/shared/use-masters'
+    46→
+    47→// ---------- types ----------
+    48→
+    49→type LeadRow = {
+    50→  id: string
+    51→  leadCode: string
+    52→  department: string
+    53→  customerName: string
+    54→  companyName: string | null
+    55→  mobile: string
+    56→  stage: { id: string; label: string; extra: string | null } | null
+    57→  disposition: { id: string; label: string; extra: string | null } | null
+    58→  subDisposition: { id: string; label: string } | null
+    59→  priority: string | null
+    60→  estimatedValue: number | null
+    61→  nextFollowUpAt: string | null
+    62→  isSticky: boolean
+    63→  status: string
+    64→}
+    65→
+    66→type LeadsResponse = {
+    67→  leads: LeadRow[]
+    68→  total: number
+    69→  page: number
+    70→  pageSize: number
+    71→}
+    72→
+    73→type CallItem = {
+    74→  id: string
+    75→  lead: { id: string; leadCode: string; customerName: string; mobile: string; department: string } | null
+    76→  user: { id: string; name: string } | null
+    77→  direction: string
+    78→  status: string
+    79→  durationSec: number
+    80→  notes: string | null
+    81→  channel: string
+    82→  isVideo: boolean
+    83→  createdAt: string
+    84→}
+    85→
+    86→type CallsResponse = {
+    87→  calls: CallItem[]
+    88→  total: number
+    89→  summary: {
+    90→    total: number
+    91→    incoming: number
+    92→    outgoing: number
+    93→    missed: number
+    94→    connected: number
+    95→    notConnected: number
+    96→    avgTalkTimeSec: number
+    97→  }
+    98→}
+    99→
+   100→type DetailLead = {
+   101→  id: string
+   102→  leadCode: string
+   103→  department: string
+   104→  customerName: string
+   105→  companyName: string | null
+   106→  mobile: string
+   107→  whatsapp: string | null
+   108→  productInterest: string | null
+   109→  requirementNotes: string | null
+   110→  notes: string | null
+   111→  stage: { id: string; label: string; extra: string | null } | null
+   112→  disposition: { id: string; label: string; extra: string | null } | null
+   113→  subDisposition: { id: string; label: string } | null
+   114→  priority: string | null
+   115→  estimatedValue: number | null
+   116→  nextFollowUpAt: string | null
+   117→  lastContactAt: string | null
+   118→  isSticky: boolean
+   119→  status: string
+   120→}
+   121→
+   122→type LeadBundle = {
+   123→  lead: DetailLead
+   124→  followups: Array<{ id: string; dueAt: string; status: string; note: string | null }>
+   125→  callLogs: CallItem[]
+   126→}
+   127→
+   128→type PickerLead = { id: string; leadCode: string; customerName: string; mobile: string; department: string }
+   129→
+   130→type QueueTab = 'overdue' | 'today' | 'mine'
+   131→
+   132→const TABS: { id: QueueTab; label: string }[] = [
+   133→  { id: 'overdue', label: 'Overdue' },
+   134→  { id: 'today', label: 'Today' },
+   135→  { id: 'mine', label: 'All Mine' },
+   136→]
+   137→
+   138→// ---------- lead picker (searchable, debounced) ----------
+   139→
+   140→function LeadPicker({ value, onSelect }: { value: PickerLead | null; onSelect: (l: PickerLead | null) => void }) {
+   141→  const [q, setQ] = useState('')
+   142→  const [results, setResults] = useState<PickerLead[]>([])
+   143→  const [loading, setLoading] = useState(false)
+   144→
+   145→  useEffect(() => {
+   146→    if (value) return
+   147→    let cancelled = false
+   148→    const t = setTimeout(() => {
+   149→      setLoading(true)
+   150→      api<{ leads: PickerLead[] }>(`/api/leads${qs({ q: q || undefined, pageSize: 10 })}`)
+   151→        .then((res) => {
+   152→          if (!cancelled) setResults(res.leads ?? [])
+   153→        })
+   154→        .catch(() => {
+   155→          if (!cancelled) setResults([])
+   156→        })
+   157→        .finally(() => {
+   158→          if (!cancelled) setLoading(false)
+   159→        })
+   160→    }, 350)
+   161→    return () => {
+   162→      cancelled = true
+   163→      clearTimeout(t)
+   164→    }
+   165→  }, [q, value])
+   166→
+   167→  if (value) {
+   168→    return (
+   169→      <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+   170→        <div className="min-w-0">
+   171→          <p className="truncate text-sm font-medium text-stone-800">
+   172→            {value.customerName} <span className="font-mono text-xs text-stone-500">{value.leadCode}</span>
+   173→          </p>
+   174→          <p className="text-xs text-stone-500">
+   175→            {value.mobile} · {value.department}
+   176→          </p>
+   177→        </div>
+   178→        <Button type="button" variant="ghost" size="sm" onClick={() => onSelect(null)}>
+   179→          Change
+   180→        </Button>
+   181→      </div>
+   182→    )
+   183→  }
+   184→
+   185→  return (
+   186→    <div className="space-y-1.5">
+   187→      <Input placeholder="Search lead by name / mobile / code..." value={q} onChange={(e) => setQ(e.target.value)} />
+   188→      <div className="max-h-44 overflow-y-auto rounded-lg border border-stone-200">
+   189→        {loading ? (
+   190→          <div className="flex items-center gap-2 px-3 py-3 text-xs text-stone-500">
+   191→            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Searching...
+   192→          </div>
+   193→        ) : results.length === 0 ? (
+   194→          <p className="px-3 py-3 text-xs text-stone-500">No leads found</p>
+   195→        ) : (
+   196→          results.map((l) => (
+   197→            <button
+   198→              key={l.id}
+   199→              type="button"
+   200→              onClick={() => onSelect(l)}
+   201→              className="flex w-full items-center justify-between gap-2 border-b border-stone-100 px-3 py-2 text-left text-sm last:border-0 hover:bg-emerald-50"
+   202→            >
+   203→              <span className="min-w-0 truncate">
+   204→                <span className="font-medium text-stone-800">{l.customerName}</span>{' '}
+   205→                <span className="font-mono text-xs text-stone-400">{l.leadCode}</span>
+   206→              </span>
+   207→              <span className="shrink-0 text-xs text-stone-500">{l.mobile}</span>
+   208→            </button>
+   209→          ))
+   210→        )}
+   211→      </div>
+   212→    </div>
+   213→  )
+   214→}
+   215→
+   216→// ---------- component ----------
+   217→
+   218→export default function DialerView() {
+   219→  const user = useAppStore((s) => s.user)
+   220→  const setView = useAppStore((s) => s.setView)
+   221→  const { toast } = useToast()
+   222→  const masters = useMasters()
+   223→
+   224→  const [summary, setSummary] = useState<CallsResponse['summary'] | null>(null)
+   225→  const [kpisLoading, setKpisLoading] = useState(true)
+   226→
+   227→  const [tab, setTab] = useState<QueueTab>('overdue')
+   228→  const [queue, setQueue] = useState<LeadRow[]>([])
+   229→  const [queueLoading, setQueueLoading] = useState(true)
+   230→  const [reloadKey, setReloadKey] = useState(0)
+   231→
+   232→  const [selected, setSelected] = useState<LeadRow | null>(null)
+   233→  const [bundle, setBundle] = useState<LeadBundle | null>(null)
+   234→  const [leadCalls, setLeadCalls] = useState<CallItem[]>([])
+   235→  const [panelLoading, setPanelLoading] = useState(false)
+   236→
+   237→  // call modal
+   238→  const [callOpen, setCallOpen] = useState(false)
+   239→  const [phase, setPhase] = useState<'calling' | 'disposition'>('calling')
+   240→  const [seconds, setSeconds] = useState(0)
+   241→  const [endingCall, setEndingCall] = useState(false)
+   242→  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   243→
+   244→  // disposition form
+   245→  const [dispId, setDispId] = useState('')
+   246→  const [subId, setSubId] = useState('')
+   247→  const [callbackAt, setCallbackAt] = useState('')
+   248→  const [followUpAt, setFollowUpAt] = useState('')
+   249→  const [estValue, setEstValue] = useState('')
+   250→  const [payAmount, setPayAmount] = useState('')
+   251→  const [payMode, setPayMode] = useState('UPI')
+   252→  const [dispNote, setDispNote] = useState('')
+   253→  const [savingDisp, setSavingDisp] = useState(false)
+   254→
+   255→  // not-connected quick action
+   256→  const [notConnPending, setNotConnPending] = useState(false)
+   257→
+   258→  // incoming call dialog
+   259→  const [incomingOpen, setIncomingOpen] = useState(false)
+   260→  const [incomingLead, setIncomingLead] = useState<PickerLead | null>(null)
+   261→  const [incomingStatus, setIncomingStatus] = useState('CONNECTED')
+   262→  const [incomingMins, setIncomingMins] = useState('2')
+   263→  const [incomingNotes, setIncomingNotes] = useState('')
+   264→  const [incomingPending, setIncomingPending] = useState(false)
+   265→
+   266→  // today calls dialog
+   267→  const [callsOpen, setCallsOpen] = useState(false)
+   268→  const [callsStatus, setCallsStatus] = useState('')
+   269→  const [callsList, setCallsList] = useState<CallItem[]>([])
+   270→  const [callsLoading, setCallsLoading] = useState(false)
+   271→
+   272→  const todayRange = useMemo(() => {
+   273→    const start = new Date()
+   274→    start.setHours(0, 0, 0, 0)
+   275→    const end = new Date()
+   276→    end.setHours(23, 59, 59, 999)
+   277→    return { from: start.toISOString(), to: end.toISOString() }
+   278→  }, [])
+   279→
+   280→  // ---------- loaders ----------
+   281→
+   282→  const loadKpis = useCallback(async () => {
+   283→    try {
+   284→      const res = await api<CallsResponse>(
+   285→        `/api/calls${qs({ from: todayRange.from, to: todayRange.to, page: 1, pageSize: 1 })}`
+   286→      )
+   287→      setSummary(res.summary)
+   288→    } catch (e) {
+   289→      toast({ title: 'Failed to load call stats', description: (e as Error).message, variant: 'destructive' })
+   290→    } finally {
+   291→      setKpisLoading(false)
+   292→    }
+   293→  }, [todayRange, toast])
+   294→
+   295→  const loadQueue = useCallback(async () => {
+   296→    setQueueLoading(true)
+   297→    try {
+   298→      const params =
+   299→        tab === 'overdue'
+   300→          ? { followup: 'overdue', sort: 'nextFollowUpAt', dir: 'asc' }
+   301→          : tab === 'today'
+   302→            ? { followup: 'today', sort: 'nextFollowUpAt', dir: 'asc' }
+   303→            : { assignedToId: user?.id, status: 'ACTIVE' }
+   304→      const res = await api<LeadsResponse>(`/api/leads${qs({ ...params, pageSize: 50 })}`)
+   305→      setQueue(res.leads ?? [])
+   306→    } catch (e) {
+   307→      toast({ title: 'Failed to load calling queue', description: (e as Error).message, variant: 'destructive' })
+   308→    } finally {
+   309→      setQueueLoading(false)
+   310→    }
+   311→  }, [tab, user?.id, toast])
+   312→
+   313→  useEffect(() => {
+   314→    loadKpis()
+   315→  }, [loadKpis, reloadKey])
+   316→
+   317→  useEffect(() => {
+   318→    loadQueue()
+   319→  }, [loadQueue, reloadKey])
+   320→
+   321→  const refreshAll = useCallback(() => setReloadKey((k) => k + 1), [])
+   322→
+   323→  const openLeadPanel = useCallback(
+   324→    async (lead: LeadRow) => {
+   325→      setSelected(lead)
+   326→      setBundle(null)
+   327→      setLeadCalls([])
+   328→      setPanelLoading(true)
+   329→      const [callsRes, detailRes] = await Promise.allSettled([
+   330→        api<CallsResponse>(`/api/calls${qs({ leadId: lead.id, pageSize: 5 })}`),
+   331→        api<LeadBundle>(`/api/leads/detail${qs({ id: lead.id })}`),
+   332→      ])
+   333→      if (callsRes.status === 'fulfilled') setLeadCalls(callsRes.value.calls ?? [])
+   334→      if (detailRes.status === 'fulfilled') setBundle(detailRes.value)
+   335→      else
+   336→        toast({
+   337→          title: 'Failed to load lead history',
+   338→          description: detailRes.status === 'rejected' ? (detailRes.reason as Error).message : undefined,
+   339→          variant: 'destructive',
+   340→        })
+   341→      setPanelLoading(false)
+   342→    },
+   343→    [toast]
+   344→  )
+   345→
+   346→  // ---------- call timer ----------
+   347→
+   348→  useEffect(() => {
+   349→    if (!callOpen || phase !== 'calling') return
+   350→    timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+   351→    return () => {
+   352→      if (timerRef.current) clearInterval(timerRef.current)
+   353→      timerRef.current = null
+   354→    }
+   355→  }, [callOpen, phase])
+   356→
+   357→  const panelLead = bundle?.lead ?? null
+   358→  const panelDept = panelLead?.department ?? selected?.department ?? user?.department ?? ''
+   359→  const dispositionOptions = useMemo(() => masters.items('disposition', panelDept || undefined), [masters, panelDept])
+   360→  const subOptions = useMemo(
+   361→    () => (dispId ? masters.subItems(dispId, panelDept || undefined) : []),
+   362→    [masters, dispId, panelDept]
+   363→  )
+   364→  const dispExtra = useMemo(() => dispositionExtra(masters.byId(dispId)?.extra), [masters, dispId])
+   365→
+   366→  const resetDispForm = useCallback(() => {
+   367→    setDispId('')
+   368→    setSubId('')
+   369→    setCallbackAt('')
+   370→    setFollowUpAt('')
+   371→    setEstValue('')
+   372→    setPayAmount('')
+   373→    setPayMode('UPI')
+   374→    setDispNote('')
+   375→  }, [])
+   376→
+   377→  const startCall = () => {
+   378→    setPhase('calling')
+   379→    setSeconds(0)
+   380→    resetDispForm()
+   381→    setCallOpen(true)
+   382→  }
+   383→
+   384→  const endCall = async () => {
+   385→    if (!selected) return
+   386→    setEndingCall(true)
+   387→    try {
+   388→      await api('/api/calls', {
+   389→        method: 'POST',
+   390→        body: {
+   391→          leadId: selected.id,
+   392→          direction: 'OUTGOING',
+   393→          status: 'CONNECTED',
+   394→          durationSec: seconds,
+   395→        },
+   396→      })
+   397→      setPhase('disposition')
+   398→      refreshAll()
+   399→    } catch (e) {
+   400→      toast({ title: 'Failed to log call', description: (e as Error).message, variant: 'destructive' })
+   401→    } finally {
+   402→      setEndingCall(false)
+   403→    }
+   404→  }
+   405→
+   406→  const submitDisposition = async () => {
+   407→    if (!selected) return
+   408→    if (!dispId) {
+   409→      toast({ title: 'Select a disposition first', variant: 'destructive' })
+   410→      return
+   411→    }
+   412→    if (dispExtra.showCallback && !callbackAt) {
+   413→      toast({ title: 'Next Callback Date & Time is required', variant: 'destructive' })
+   414→      return
+   415→    }
+   416→    if (dispExtra.showFollowUp && !followUpAt) {
+   417→      toast({ title: 'Follow-up Date & Time is required', variant: 'destructive' })
+   418→      return
+   419→    }
+   420→    setSavingDisp(true)
+   421→    try {
+   422→      await api('/api/leads', {
+   423→        method: 'PATCH',
+   424→        body: {
+   425→          id: selected.id,
+   426→          dispositionUpdate: {
+   427→            dispositionId: dispId,
+   428→            subDispositionId: subId || undefined,
+   429→            callbackAt: dispExtra.showCallback ? callbackAt : undefined,
+   430→            followUpAt: dispExtra.showFollowUp ? followUpAt : undefined,
+   431→            estimatedValue: dispExtra.showEstimated && estValue ? Number(estValue) : undefined,
+   432→            paymentAmount: dispExtra.showPayment && payAmount ? Number(payAmount) : undefined,
+   433→            mode: dispExtra.showPayment ? payMode : undefined,
+   434→            note: dispNote || undefined,
+   435→          },
+   436→        },
+   437→      })
+   438→      toast({ title: 'Call saved', description: 'Call log + disposition updated' })
+   439→      setCallOpen(false)
+   440→      refreshAll()
+   441→      void openLeadPanel(selected)
+   442→    } catch (e) {
+   443→      toast({ title: 'Disposition failed', description: (e as Error).message, variant: 'destructive' })
+   444→    } finally {
+   445→      setSavingDisp(false)
+   446→    }
+   447→  }
+   448→
+   449→  const quickNotConnected = async () => {
+   450→    if (!selected || notConnPending) return
+   451→    setNotConnPending(true)
+   452→    try {
+   453→      await api('/api/calls', {
+   454→        method: 'POST',
+   455→        body: { leadId: selected.id, direction: 'OUTGOING', status: 'NOT_CONNECTED', durationSec: 0 },
+   456→      })
+   457→      const nc = masters
+   458→        .items('disposition', selected.department)
+   459→        .find((d) => d.label.toLowerCase().includes('not connected'))
+   460→      if (nc) {
+   461→        await api('/api/leads', {
+   462→          method: 'PATCH',
+   463→          body: { id: selected.id, dispositionUpdate: { dispositionId: nc.id } },
+   464→        })
+   465→      }
+   466→      toast({ title: 'Not Connected call logged', description: `${selected.customerName} marked as not connected` })
+   467→      refreshAll()
+   468→      void openLeadPanel(selected)
+   469→    } catch (e) {
+   470→      toast({ title: 'Failed to log call', description: (e as Error).message, variant: 'destructive' })
+   471→    } finally {
+   472→      setNotConnPending(false)
+   473→    }
+   474→  }
+   475→
+   476→  const submitIncoming = async () => {
+   477→    if (!incomingLead) {
+   478→      toast({ title: 'Pick a lead for the incoming call', variant: 'destructive' })
+   479→      return
+   480→    }
+   481→    setIncomingPending(true)
+   482→    try {
+   483→      await api('/api/calls', {
+   484→        method: 'POST',
+   485→        body: {
+   486→          leadId: incomingLead.id,
+   487→          direction: 'INCOMING',
+   488→          status: incomingStatus,
+   489→          durationSec: incomingStatus === 'MISSED' ? 0 : Math.max(0, Number(incomingMins) || 0) * 60,
+   490→          notes: incomingNotes || undefined,
+   491→        },
+   492→      })
+   493→      toast({ title: 'Incoming call logged', description: `${incomingLead.customerName} — ${incomingStatus}` })
+   494→      setIncomingOpen(false)
+   495→      setIncomingLead(null)
+   496→      setIncomingNotes('')
+   497→      setIncomingMins('2')
+   498→      setIncomingStatus('CONNECTED')
+   499→      refreshAll()
+   500→    } catch (e) {
+   501→      toast({ title: 'Failed to log incoming call', description: (e as Error).message, variant: 'destructive' })
+   502→    } finally {
+   503→      setIncomingPending(false)
+   504→    }
+   505→  }
+   506→
+   507→  // ---------- today calls dialog ----------
+   508→
+   509→  const loadCallsDialog = useCallback(async () => {
+   510→    if (!callsOpen) return
+   511→    setCallsLoading(true)
+   512→    try {
+   513→      const res = await api<CallsResponse>(
+   514→        `/api/calls${qs({
+   515→          from: todayRange.from,
+   516→          to: todayRange.to,
+   517→          status: callsStatus && callsStatus !== 'all' ? callsStatus : undefined,
+   518→          page: 1,
+   519→          pageSize: 50,
+   520→        })}`
+   521→      )
+   522→      setCallsList(res.calls ?? [])
+   523→    } catch (e) {
+   524→      toast({ title: 'Failed to load calls', description: (e as Error).message, variant: 'destructive' })
+   525→    } finally {
+   526→      setCallsLoading(false)
+   527→    }
+   528→  }, [callsOpen, callsStatus, todayRange, toast])
+   529→
+   530→  useEffect(() => {
+   531→    loadCallsDialog()
+   532→  }, [loadCallsDialog])
+   533→
+   534→  const callColumns: Column<CallItem>[] = useMemo(
+   535→    () => [
+   536→      {
+   537→        key: 'createdAt',
+   538→        header: 'Time',
+   539→        render: (c) => <span className="whitespace-nowrap text-xs">{formatDateTime(c.createdAt)}</span>,
+   540→      },
+   541→      {
+   542→        key: 'lead',
+   543→        header: 'Lead',
+   544→        render: (c) =>
+   545→          c.lead ? (
+   546→            <div>
+   547→              <p className="font-medium text-stone-800">{c.lead.customerName}</p>
+   548→              <p className="text-xs text-stone-500">
+   549→                {c.lead.mobile} · {c.lead.department}
+   550→              </p>
+   551→            </div>
+   552→          ) : (
+   553→            <span className="text-stone-400">—</span>
+   554→          ),
+   555→      },
+   556→      { key: 'direction', header: 'Direction', render: (c) => <StatusBadge status={c.direction} variant="direction" /> },
+   557→      { key: 'status', header: 'Status', render: (c) => <StatusBadge status={c.status} variant="call" /> },
+   558→      { key: 'durationSec', header: 'Duration', render: (c) => <span>{formatDuration(c.durationSec)}</span> },
+   559→      { key: 'user', header: 'Agent', render: (c) => <span>{c.user?.name ?? '—'}</span> },
+   560→      {
+   561→        key: 'notes',
+   562→        header: 'Notes',
+   563→        render: (c) => <span className="line-clamp-2 max-w-[220px] text-xs text-stone-500">{c.notes ?? '—'}</span>,
+   564→      },
+   565→    ],
+   566→    []
+   567→  )
+   568→
+   569→  // ---------- derived ----------
+   570→
+   571→  const dailyTarget = user?.dailyCallTarget ?? null
+   572→  const callsProgress =
+   573→    dailyTarget && summary ? Math.min(100, Math.round((summary.total / dailyTarget) * 100)) : undefined
+   574→
+   575→  const isOverdue = (d: string | null) => Boolean(d && new Date(d).getTime() < Date.now())
+   576→
+   577→  // ---------- render ----------
+   578→
+   579→  return (
+   580→    <div>
+   581→      <PageHeader title="Telecalling Dialer" subtitle="Work your calling queue — review old data before every call and log dispositions instantly">
+   582→        <Button variant="outline" onClick={refreshAll} aria-label="Refresh dialer">
+   583→          <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh
+   584→        </Button>
+   585→        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setIncomingOpen(true)}>
+   586→          <PhoneIncoming className="mr-1.5 h-4 w-4" /> Log Incoming Call
+   587→        </Button>
+   588→      </PageHeader>
+   589→
+   590→      {/* KPI strip */}
+   591→      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+   592→        <KpiCard
+   593→          label="Calls Today"
+   594→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.total ?? 0)}
+   595→          sub={dailyTarget ? `Daily target: ${dailyTarget} calls` : 'All calls logged today'}
+   596→          icon={<Phone className="h-4 w-4" />}
+   597→          progress={callsProgress}
+   598→          onClick={() => {
+   599→            setCallsStatus('')
+   600→            setCallsOpen(true)
+   601→          }}
+   602→        />
+   603→        <KpiCard
+   604→          label="Connected Today"
+   605→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.connected ?? 0)}
+   606→          sub={`${summary?.outgoing ?? 0} outgoing · ${summary?.incoming ?? 0} incoming`}
+   607→          icon={<PhoneCall className="h-4 w-4" />}
+   608→          tone="positive"
+   609→          onClick={() => {
+   610→            setCallsStatus('CONNECTED')
+   611→            setCallsOpen(true)
+   612→          }}
+   613→        />
+   614→        <KpiCard
+   615→          label="Missed Today"
+   616→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : (summary?.missed ?? 0)}
+   617→          sub={`${summary?.notConnected ?? 0} not connected`}
+   618→          icon={<PhoneMissed className="h-4 w-4" />}
+   619→          tone="negative"
+   620→          onClick={() => {
+   621→            setCallsStatus('MISSED')
+   622→            setCallsOpen(true)
+   623→          }}
+   624→        />
+   625→        <KpiCard
+   626→          label="Avg Talk Time"
+   627→          value={kpisLoading ? <Skeleton className="h-7 w-16" /> : formatDuration(summary?.avgTalkTimeSec ?? 0)}
+   628→          sub="Across all calls today"
+   629→          icon={<Timer className="h-4 w-4" />}
+   630→          onClick={() => {
+   631→            setCallsStatus('')
+   632→            setCallsOpen(true)
+   633→          }}
+   634→        />
+   635→      </div>
+   636→
+   637→      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,430px)]">
+   638→        {/* Calling queue */}
+   639→        <section className="rounded-xl border border-stone-200 bg-white shadow-sm">
+   640→          <div className="flex flex-col gap-2 border-b border-stone-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+   641→            <div>
+   642→              <h2 className="text-sm font-semibold text-stone-800">Calling Queue</h2>
+   643→              <p className="text-xs text-stone-500">{queue.length} lead(s) in this bucket — tap a lead to open the call panel</p>
+   644→            </div>
+   645→            <Tabs value={tab} onValueChange={(v) => setTab(v as QueueTab)}>
+   646→              <TabsList>
+   647→                {TABS.map((t) => (
+   648→                  <TabsTrigger key={t.id} value={t.id} className="text-xs">
+   649→                    {t.label}
+   650→                  </TabsTrigger>
+   651→                ))}
+   652→              </TabsList>
+   653→            </Tabs>
+   654→          </div>
+   655→          <div className="max-h-[560px] space-y-2 overflow-y-auto p-3">
+   656→            {queueLoading ? (
+   657→              Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-lg" />)
+   658→            ) : queue.length === 0 ? (
+   659→              <EmptyState
+   660→                icon={PhoneCall}
+   661→                title="Queue is clear"
+   662→                subtitle={
+   663→                  tab === 'overdue'
+   664→                    ? 'No overdue follow-ups. Great job!'
+   665→                    : tab === 'today'
+   666→                      ? 'No follow-ups due today. Switch to All Mine to keep dialing.'
+   667→                      : 'No active leads assigned to you yet.'
+   668→                }
+   669→              />
+   670→            ) : (
+   671→              queue.map((lead) => (
+   672→                <div
+   673→                  key={lead.id}
+   674→                  role="button"
+   675→                  tabIndex={0}
+   676→                  onClick={() => void openLeadPanel(lead)}
+   677→                  onKeyDown={(e) => {
+   678→                    if (e.key === 'Enter' || e.key === ' ') void openLeadPanel(lead)
+   679→                  }}
+   680→                  className={cn(
+   681→                    'cursor-pointer rounded-lg border p-3 text-left transition-colors hover:bg-emerald-50/50',
+   682→                    selected?.id === lead.id ? 'border-emerald-400 bg-emerald-50/60' : 'border-stone-200 bg-white'
+   683→                  )}
+   684→                >
+   685→                  <div className="flex flex-wrap items-center gap-1.5">
+   686→                    <span className="text-sm font-semibold text-stone-800">{lead.customerName}</span>
+   687→                    {lead.companyName ? <span className="text-xs text-stone-500">· {lead.companyName}</span> : null}
+   688→                    {lead.isSticky ? <Pin className="h-3 w-3 text-amber-500" aria-label="Sticky lead" /> : null}
+   689→                    <StatusBadge status={lead.department} variant="dept" className="ml-auto" />
+   690→                    {lead.stage ? (
+   691→                      <Badge variant="outline" className="border-stone-200 font-medium text-stone-700">
+   692→                        {lead.stage.label}
+   693→                      </Badge>
+   694→                    ) : null}
+   695→                  </div>
+   696→                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
+   697→                    <span className="font-mono text-stone-600">{lead.mobile}</span>
+   698→                    {lead.disposition ? <span>Disp: {lead.disposition.label}</span> : null}
+   699→                    {lead.nextFollowUpAt ? (
+   700→                      <span className={cn(isOverdue(lead.nextFollowUpAt) ? 'font-medium text-rose-600' : 'text-stone-500')}>
+   701→                        Follow-up: {formatDateTime(lead.nextFollowUpAt)}
+   702→                      </span>
+   703→                    ) : null}
+   704→                    {lead.estimatedValue ? (
+   705→                      <span className="font-medium text-emerald-700">Est: {formatINR(lead.estimatedValue, true)}</span>
+   706→                    ) : null}
+   707→                  </div>
+   708→                </div>
+   709→              ))
+   710→            )}
+   711→          </div>
+   712→        </section>
+   713→
+   714→        {/* Call panel — old data before calling */}
+   715→        <section
+   716→          className={cn(
+   717→            'rounded-xl border border-stone-200 bg-white shadow-sm lg:order-last',
+   718→            selected && 'order-first'
+   719→          )}
+   720→        >
+   721→          {!selected ? (
+   722→            <div className="p-4">
+   723→              <EmptyState
+   724→                icon={Phone}
+   725→                title="Select a lead from the queue"
+   726→                subtitle="The panel shows previous call logs, notes, disposition and requirement details BEFORE you dial — so you never call blind."
+   727→              />
+   728→            </div>
+   729→          ) : panelLoading || !panelLead ? (
+   730→            <div className="space-y-3 p-4">
+   731→              <Skeleton className="h-8 w-2/3" />
+   732→              <Skeleton className="h-4 w-1/2" />
+   733→              <Skeleton className="h-20 w-full" />
+   734→              <Skeleton className="h-20 w-full" />
+   735→            </div>
+   736→          ) : (
+   737→            <div className="flex max-h-[640px] flex-col overflow-y-auto">
+   738→              <div className="border-b border-stone-100 p-4">
+   739→                <div className="flex flex-wrap items-center gap-2">
+   740→                  <UserAvatar name={panelLead.customerName} className="h-10 w-10 text-sm" />
+   741→                  <div className="min-w-0">
+   742→                    <p className="flex items-center gap-1.5 truncate text-base font-semibold text-stone-900">
+   743→                      {panelLead.customerName}
+   744→                      {panelLead.isSticky ? <Pin className="h-3.5 w-3.5 text-amber-500" aria-label="Sticky lead" /> : null}
+   745→                    </p>
+   746→                    <p className="font-mono text-xs text-stone-500">{panelLead.mobile}</p>
+   747→                  </div>
+   748→                  <StatusBadge status={panelLead.department} variant="dept" className="ml-auto" />
+   749→                </div>
+   750→                <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+   751→                  <div>
+   752→                    <p className="text-stone-400">Lead</p>
+   753→                    <p className="font-mono font-medium text-stone-700">{panelLead.leadCode}</p>
+   754→                  </div>
+   755→                  <div>
+   756→                    <p className="text-stone-400">Stage</p>
+   757→                    <p className="font-medium text-stone-700">{panelLead.stage?.label ?? '—'}</p>
+   758→                  </div>
+   759→                  <div>
+   760→                    <p className="text-stone-400">Disposition</p>
+   761→                    <p className="font-medium text-stone-700">
+   762→                      {panelLead.disposition?.label ?? '—'}
+   763→                      {panelLead.subDisposition ? ` / ${panelLead.subDisposition.label}` : ''}
+   764→                    </p>
+   765→                  </div>
+   766→                  <div>
+   767→                    <p className="text-stone-400">Estimated Value</p>
+   768→                    <p className="font-medium text-emerald-700">
+   769→                      {panelLead.estimatedValue ? formatINR(panelLead.estimatedValue) : '—'}
+   770→                    </p>
+   771→                  </div>
+   772→                  <div>
+   773→                    <p className="text-stone-400">Next Follow-up</p>
+   774→                    <p className={cn('font-medium', isOverdue(panelLead.nextFollowUpAt) ? 'text-rose-600' : 'text-stone-700')}>
+   775→                      {panelLead.nextFollowUpAt ? formatDateTime(panelLead.nextFollowUpAt) : '—'}
+   776→                    </p>
+   777→                  </div>
+   778→                  <div>
+   779→                    <p className="text-stone-400">Last Contact</p>
+   780→                    <p className="font-medium text-stone-700">{timeAgo(panelLead.lastContactAt)}</p>
+   781→                  </div>
+   782→                </div>
+   783→                {panelLead.requirementNotes || panelLead.notes ? (
+   784→                  <div className="mt-3 rounded-lg bg-stone-50 p-2.5 text-xs text-stone-600">
+   785→                    <p className="mb-0.5 font-semibold text-stone-500">Requirements / Notes</p>
+   786→                    <p className="whitespace-pre-wrap">{panelLead.requirementNotes ?? panelLead.notes}</p>
+   787→                  </div>
+   788→                ) : null}
+   789→                <div className="mt-3 flex flex-wrap gap-2">
+   790→                  <Button
+   791→                    className="min-h-11 flex-1 bg-emerald-600 hover:bg-emerald-700"
+   792→                    onClick={startCall}
+   793→                  >
+   794→                    <Phone className="mr-1.5 h-4 w-4" /> Start Call
+   795→                  </Button>
+   796→                  <Button
+   797→                    variant="outline"
+   798→                    className="min-h-11"
+   799→                    disabled={notConnPending}
+   800→                    onClick={() => void quickNotConnected()}
+   801→                  >
+   802→                    {notConnPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PhoneOff className="mr-1.5 h-4 w-4" />}
+   803→                    Not Connected
+   804→                  </Button>
+   805→                  <Button
+   806→                    variant="ghost"
+   807→                    className="min-h-11"
+   808→                    onClick={() => setView('lead-detail', { leadId: panelLead.id })}
+   809→                    aria-label="Open full lead details"
+   810→                  >
+   811→                    <ExternalLink className="h-4 w-4" />
+   812→                  </Button>
+   813→                </div>
+   814→              </div>
+   815→
+   816→              {/* last 5 call logs */}
+   817→              <div className="border-b border-stone-100 p-4">
+   818→                <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+   819→                  <Phone className="h-3.5 w-3.5" /> Last {leadCalls.length} call{leadCalls.length === 1 ? '' : 's'}
+   820→                </h3>
+   821→                {leadCalls.length === 0 ? (
+   822→                  <p className="text-xs text-stone-400">No previous calls — this will be a fresh conversation.</p>
+   823→                ) : (
+   824→                  <ul className="space-y-1.5">
+   825→                    {leadCalls.map((c) => (
+   826→                      <li key={c.id} className="flex items-center gap-2 rounded-lg bg-stone-50 px-2.5 py-1.5 text-xs">
+   827→                        <StatusBadge status={c.direction} variant="direction" />
+   828→                        <StatusBadge status={c.status} variant="call" />
+   829→                        <span className="text-stone-600">{formatDuration(c.durationSec)}</span>
+   830→                        <span className="ml-auto shrink-0 text-stone-400">{formatDateTime(c.createdAt)}</span>
+   831→                      </li>
+   832→                    ))}
+   833→                  </ul>
+   834→                )}
+   835→              </div>
+   836→
+   837→              {/* recent follow-ups */}
+   838→              <div className="p-4">
+   839→                <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
+   840→                  <CalendarClock className="h-3.5 w-3.5" /> Recent follow-ups
+   841→                </h3>
+   842→                {(bundle?.followups ?? []).length === 0 ? (
+   843→                  <p className="text-xs text-stone-400">No follow-ups recorded yet.</p>
+   844→                ) : (
+   845→                  <ul className="space-y-1.5">
+   846→                    {(bundle?.followups ?? []).slice(0, 5).map((f) => (
+   847→                      <li key={f.id} className="rounded-lg bg-stone-50 px-2.5 py-1.5 text-xs">
+   848→                        <div className="flex items-center gap-2">
+   849→                          <StatusBadge status={f.status} variant="followup" />
+   850→                          <span className="text-stone-600">{formatDateTime(f.dueAt)}</span>
+   851→                        </div>
+   852→                        {f.note ? <p className="mt-0.5 line-clamp-2 text-stone-500">{f.note}</p> : null}
+   853→                      </li>
+   854→                    ))}
+   855→                  </ul>
+   856→                )}
+   857→              </div>
+   858→            </div>
+   859→          )}
+   860→        </section>
+   861→      </div>
+   862→
+   863→      {/* Click-to-call modal */}
+   864→      <Dialog open={callOpen} onOpenChange={(o) => !o && setCallOpen(false)}>
+   865→        <DialogContent className="sm:max-w-lg">
+   866→          {phase === 'calling' ? (
+   867→            <div className="flex flex-col items-center py-4 text-center">
+   868→              <div className="relative">
+   869→                <div className="absolute inset-0 animate-ping rounded-full bg-emerald-200" aria-hidden />
+   870→                <UserAvatar name={selected?.customerName} className="relative h-20 w-20 text-xl" />
+   871→              </div>
+   872→              <p className="mt-4 text-lg font-semibold text-stone-900">{selected?.customerName ?? 'Calling...'}</p>
+   873→              <p className="font-mono text-sm text-stone-500">{selected?.mobile}</p>
+   874→              <p className="mt-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600">
+   875→                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden /> Calling...
+   876→              </p>
+   877→              <p className="mt-4 font-mono text-4xl font-bold tabular-nums text-stone-800" aria-live="polite">
+   878→                {String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}
+   879→              </p>
+   880→              <p className="mt-1 text-xs text-stone-400">Simulated call — duration is recorded in the CRM on end</p>
+   881→              <Button
+   882→                variant="destructive"
+   883→                size="lg"
+   884→                className="mt-5 min-h-11 w-full sm:w-auto"
+   885→                disabled={endingCall}
+   886→                onClick={() => void endCall()}
+   887→              >
+   888→                {endingCall ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PhoneOff className="mr-1.5 h-4 w-4" />}
+   889→                End Call &amp; Log
+   890→              </Button>
+   891→            </div>
+   892→          ) : (
+   893→            <>
+   894→              <DialogHeader>
+   895→                <DialogTitle>Post-Call Disposition</DialogTitle>
+   896→                <DialogDescription>
+   897→                  {selected?.customerName} — call duration {formatDuration(seconds)}. Save the outcome to update the lead.
+   898→                </DialogDescription>
+   899→              </DialogHeader>
+   900→              <div className="grid gap-3 py-1">
+   901→                <div className="space-y-1.5">
+   902→                  <Label>Disposition *</Label>
+   903→                  <Select value={dispId} onValueChange={setDispId} disabled={savingDisp}>
+   904→                    <SelectTrigger aria-label="Disposition">
+   905→                      <SelectValue placeholder="Select disposition" />
+   906→                    </SelectTrigger>
+   907→                    <SelectContent>
+   908→                      {dispositionOptions.map((d) => (
+   909→                        <SelectItem key={d.id} value={d.id}>
+   910→                          {d.label}
+   911→                        </SelectItem>
+   912→                      ))}
+   913→                    </SelectContent>
+   914→                  </Select>
+   915→                </div>
+   916→                {dispId && subOptions.length > 0 ? (
+   917→                  <div className="space-y-1.5">
+   918→                    <Label>Sub-disposition</Label>
+   919→                    <Select value={subId} onValueChange={setSubId} disabled={savingDisp}>
+   920→                      <SelectTrigger aria-label="Sub-disposition">
+   921→                        <SelectValue placeholder="Optional" />
+   922→                      </SelectTrigger>
+   923→                      <SelectContent>
+   924→                        {subOptions.map((s) => (
+   925→                          <SelectItem key={s.id} value={s.id}>
+   926→                            {s.label}
+   927→                          </SelectItem>
+   928→                        ))}
+   929→                      </SelectContent>
+   930→                    </Select>
+   931→                  </div>
+   932→                ) : null}
+   933→                {dispExtra.showCallback ? (
+   934→                  <div className="space-y-1.5">
+   935→                    <Label htmlFor="dialer-callback">Next Callback Date &amp; Time *</Label>
+   936→                    <Input
+   937→                      id="dialer-callback"
+   938→                      type="datetime-local"
+   939→                      value={callbackAt}
+   940→                      onChange={(e) => setCallbackAt(e.target.value)}
+   941→                    />
+   942→                  </div>
+   943→                ) : null}
+   944→                {dispExtra.showFollowUp ? (
+   945→                  <div className="space-y-1.5">
+   946→                    <Label htmlFor="dialer-followup">Follow-up Date &amp; Time *</Label>
+   947→                    <Input
+   948→                      id="dialer-followup"
+   949→                      type="datetime-local"
+   950→                      value={followUpAt}
+   951→                      onChange={(e) => setFollowUpAt(e.target.value)}
+   952→                    />
+   953→                  </div>
+   954→                ) : null}
+   955→                {dispExtra.showEstimated ? (
+   956→                  <div className="space-y-1.5">
+   957→                    <Label htmlFor="dialer-est">Estimated Order Value (₹)</Label>
+   958→                    <Input
+   959→                      id="dialer-est"
+   960→                      type="number"
+   961→                      min={0}
+   962→                      value={estValue}
+   963→                      onChange={(e) => setEstValue(e.target.value)}
+   964→                      placeholder="0"
+   965→                    />
+   966→                  </div>
+   967→                ) : null}
+   968→                {dispExtra.showPayment ? (
+   969→                  <>
+   970→                    <div className="space-y-1.5">
+   971→                      <Label htmlFor="dialer-pay">Payment Amount (₹)</Label>
+   972→                      <Input
+   973→                        id="dialer-pay"
+   974→                        type="number"
+   975→                        min={0}
+   976→                        value={payAmount}
+   977→                        onChange={(e) => setPayAmount(e.target.value)}
+   978→                        placeholder="0"
+   979→                      />
+   980→                    </div>
+   981→                    <div className="space-y-1.5">
+   982→                      <Label>Payment Mode</Label>
+   983→                      <Select value={payMode} onValueChange={setPayMode} disabled={savingDisp}>
+   984→                        <SelectTrigger aria-label="Payment mode">
+   985→                          <SelectValue />
+   986→                        </SelectTrigger>
+   987→                        <SelectContent>
+   988→                          {PAYMENT_MODES.map((m) => (
+   989→                            <SelectItem key={m} value={m}>
+   990→                              {PAYMENT_MODE_LABELS[m]}
+   991→                            </SelectItem>
+   992→                          ))}
+   993→                        </SelectContent>
+   994→                      </Select>
+   995→                    </div>
+   996→                  </>
+   997→                ) : null}
+   998→                <div className="space-y-1.5">
+   999→                  <Label htmlFor="dialer-note">Call Summary / Note</Label>
+  1000→                  <Textarea
+  1001→                    id="dialer-note"
+  1002→                    rows={2}
+  1003→                    value={dispNote}
+  1004→                    onChange={(e) => setDispNote(e.target.value)}
+  1005→                    placeholder="What did the customer say?"
+  1006→                  />
+  1007→                </div>
+  1008→              </div>
+  1009→              <DialogFooter>
+  1010→                <Button variant="outline" onClick={() => setCallOpen(false)} disabled={savingDisp}>
+  1011→                  Later
+  1012→                </Button>
+  1013→                <Button
+  1014→                  className="bg-emerald-600 hover:bg-emerald-700"
+  1015→                  disabled={savingDisp || !dispId}
+  1016→                  onClick={() => void submitDisposition()}
+  1017→                >
+  1018→                  {savingDisp ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+  1019→                  Save Disposition
+  1020→                </Button>
+  1021→              </DialogFooter>
+  1022→            </>
+  1023→          )}
+  1024→        </DialogContent>
+  1025→      </Dialog>
+  1026→
+  1027→      {/* Log incoming call */}
+  1028→      <Dialog open={incomingOpen} onOpenChange={setIncomingOpen}>
+  1029→        <DialogContent className="sm:max-w-md">
+  1030→          <DialogHeader>
+  1031→            <DialogTitle>Log Incoming Call</DialogTitle>
+  1032→            <DialogDescription>Record a customer who called you. Pick the lead, status and duration.</DialogDescription>
+  1033→          </DialogHeader>
+  1034→          <div className="grid gap-3 py-1">
+  1035→            <div className="space-y-1.5">
+  1036→              <Label>Lead *</Label>
+  1037→              <LeadPicker value={incomingLead} onSelect={setIncomingLead} />
+  1038→            </div>
+  1039→            <div className="grid grid-cols-2 gap-3">
+  1040→              <div className="space-y-1.5">
+  1041→                <Label>Status</Label>
+  1042→                <Select value={incomingStatus} onValueChange={setIncomingStatus} disabled={incomingPending}>
+  1043→                  <SelectTrigger aria-label="Call status">
+  1044→                    <SelectValue />
+  1045→                  </SelectTrigger>
+  1046→                  <SelectContent>
+  1047→                    <SelectItem value="CONNECTED">Connected</SelectItem>
+  1048→                    <SelectItem value="MISSED">Missed</SelectItem>
+  1049→                  </SelectContent>
+  1050→                </Select>
+  1051→              </div>
+  1052→              <div className="space-y-1.5">
+  1053→                <Label htmlFor="incoming-mins">Duration (minutes)</Label>
+  1054→                <Input
+  1055→                  id="incoming-mins"
+  1056→                  type="number"
+  1057→                  min={0}
+  1058→                  value={incomingStatus === 'MISSED' ? '0' : incomingMins}
+  1059→                  onChange={(e) => setIncomingMins(e.target.value)}
+  1060→                  disabled={incomingPending || incomingStatus === 'MISSED'}
+  1061→                />
+  1062→              </div>
+  1063→            </div>
+  1064→            <div className="space-y-1.5">
+  1065→              <Label htmlFor="incoming-notes">Notes</Label>
+  1066→              <Textarea
+  1067→                id="incoming-notes"
+  1068→                rows={2}
+  1069→                value={incomingNotes}
+  1070→                onChange={(e) => setIncomingNotes(e.target.value)}
+  1071→                placeholder="Why did they call?"
+  1072→              />
+  1073→            </div>
+  1074→          </div>
+  1075→          <DialogFooter>
+  1076→            <Button variant="outline" onClick={() => setIncomingOpen(false)} disabled={incomingPending}>
+  1077→              Cancel
+  1078→            </Button>
+  1079→            <Button
+  1080→              className="bg-emerald-600 hover:bg-emerald-700"
+  1081→              disabled={incomingPending || !incomingLead}
+  1082→              onClick={() => void submitIncoming()}
+  1083→            >
+  1084→              {incomingPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+  1085→              Log Call
+  1086→            </Button>
+  1087→          </DialogFooter>
+  1088→        </DialogContent>
+  1089→      </Dialog>
+  1090→
+  1091→      {/* Today calls dialog */}
+  1092→      <Dialog open={callsOpen} onOpenChange={setCallsOpen}>
+  1093→        <DialogContent className="sm:max-w-3xl">
+  1094→          <DialogHeader>
+  1095→            <DialogTitle>Calls Today{callsStatus ? ` — ${callsStatus.replaceAll('_', ' ')}` : ''}</DialogTitle>
+  1096→            <DialogDescription>All calls logged by you / your team today.</DialogDescription>
+  1097→          </DialogHeader>
+  1098→          <Select
+  1099→            value={callsStatus}
+  1100→            onValueChange={setCallsStatus}
+  1101→            disabled={callsLoading}
+  1102→          >
+  1103→            <SelectTrigger className="w-44" aria-label="Filter by status">
+  1104→              <SelectValue placeholder="All statuses" />
+  1105→            </SelectTrigger>
+  1106→            <SelectContent>
+  1107→              <SelectItem value="all">All statuses</SelectItem>
+  1108→              <SelectItem value="CONNECTED">Connected</SelectItem>
+  1109→              <SelectItem value="MISSED">Missed</SelectItem>
+  1110→              <SelectItem value="NOT_CONNECTED">Not Connected</SelectItem>
+  1111→            </SelectContent>
+  1112→          </Select>
+  1113→          <div className="max-h-[50vh] overflow-y-auto">
+  1114→            <DataTable
+  1115→              columns={callColumns}
+  1116→              rows={callsList}
+  1117→              loading={callsLoading}
+  1118→              emptyMessage="No calls logged today yet"
+  1119→            />
+  1120→          </div>
+  1121→        </DialogContent>
+  1122→      </Dialog>
+  1123→    </div>
+  1124→  )
+  1125→}
+  1126→
