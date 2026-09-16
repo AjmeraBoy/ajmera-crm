@@ -1,0 +1,510 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AJMERA FASHION LIMITED - IN-HOUSE CRM
+// Departments: ONLINE (India B2B) | EXPORT (International B2B)
+// ============================================================
+
+// ---------------- AUTH & ORGANIZATION ----------------
+
+model User {
+  id              String   @id @default(cuid())
+  name            String
+  email           String   @unique
+  password        String
+  role            String // SUPER_ADMIN | ADMIN | MANAGER | TEAM_LEADER | EXECUTIVE | ACCOUNTS | DISPATCH | SUPPORT | VIEWER
+  department      String? // ONLINE | EXPORT | null = all departments
+  phone           String?
+  languages       String? // comma separated e.g. "Hindi,English"
+  dailyCallTarget Int      @default(60)
+  isActive        Boolean  @default(true)
+  teamId          String?
+  team            Team?    @relation("TeamMembership", fields: [teamId], references: [id])
+  ledTeams        Team[]   @relation("TeamLeader")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sessions         Session[]
+  leads            Lead[]                 @relation("LeadOwner")
+  leadsCreated     Lead[]                 @relation("LeadCreator")
+  activities       Activity[]
+  followups        FollowUp[]             @relation("FollowUpOwner")
+  followupsCreated FollowUp[]             @relation("FollowUpCreator")
+  callLogs         CallLog[]
+  conversations    WhatsAppConversation[] @relation("ChatOwner")
+  messages         WhatsAppMessage[]
+  targets          Target[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  ticketsAssigned  SupportTicket[]        @relation("TicketAssignee")
+  meetings         Meeting[]
+  documents        Document[]
+  quotations       Quotation[]
+  orders           SalesOrder[]
+  payments         Payment[]
+  campaigns        Campaign[]
+  ticketComments   TicketComment[]
+}
+
+model Team {
+  id         String   @id @default(cuid())
+  name       String
+  department String // ONLINE | EXPORT
+  leaderId   String?
+  leader     User?    @relation("TeamLeader", fields: [leaderId], references: [id])
+  members    User[]   @relation("TeamMembership")
+  createdAt  DateTime @default(now())
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// ---------------- DYNAMIC MASTER DATA (fully admin-configurable) ----------------
+
+model MasterItem {
+  id        String   @id @default(cuid())
+  type      String // disposition | sub_disposition | lead_source | pipeline_stage | country | state | business_type | product_category | courier | ticket_type | payment_mode | language | conversation_label
+  label     String
+  value     String?
+  parentId  String?
+  parent    MasterItem?  @relation("MasterTree", fields: [parentId], references: [id])
+  children  MasterItem[] @relation("MasterTree")
+  dept      String   @default("ALL") // ONLINE | EXPORT | ALL
+  extra     String? // JSON: {"color":"#22c55e","showCallback":true,"showEstimated":true,"showPayment":true,"showFollowUp":true,"icon":"..."}
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  dispositionLeads    Lead[]     @relation("LeadDisposition")
+  subDispositionLeads Lead[]     @relation("LeadSubDisposition")
+  sourceLeads         Lead[]     @relation("LeadSource")
+  stageLeads          Lead[]     @relation("LeadStage")
+  businessTypeLeads   Lead[]     @relation("LeadBusinessType")
+  stateLeads          Lead[]     @relation("LeadState")
+  countryLeads        Lead[]     @relation("LeadCountry")
+  products            Product[]
+}
+
+// ---------------- LEADS & PIPELINE ----------------
+
+model Lead {
+  id               String    @id @default(cuid())
+  leadCode         String    @unique
+  department       String // ONLINE | EXPORT
+  customerName     String
+  companyName      String?
+  mobile           String
+  whatsapp         String?
+  email            String?
+  city             String?
+  stateId          String?
+  state            MasterItem? @relation("LeadState", fields: [stateId], references: [id])
+  countryId        String?
+  country          MasterItem? @relation("LeadCountry", fields: [countryId], references: [id])
+  businessTypeId   String?
+  businessType     MasterItem? @relation("LeadBusinessType", fields: [businessTypeId], references: [id])
+  productInterest  String?
+  requirementNotes String?
+  monthlyVolume    Int?
+  budget           Int?
+  sourceId         String?
+  source           MasterItem? @relation("LeadSource", fields: [sourceId], references: [id])
+  visitDate        DateTime?
+  visitTime        String?
+  assignedToId     String?
+  assignedTo       User?       @relation("LeadOwner", fields: [assignedToId], references: [id])
+  createdById      String?
+  createdBy        User?       @relation("LeadCreator", fields: [createdById], references: [id])
+  stageId          String?
+  stage            MasterItem? @relation("LeadStage", fields: [stageId], references: [id])
+  dispositionId    String?
+  disposition      MasterItem? @relation("LeadDisposition", fields: [dispositionId], references: [id])
+  subDispositionId String?
+  subDisposition   MasterItem? @relation("LeadSubDisposition", fields: [subDispositionId], references: [id])
+  priority         String? // HIGH | MEDIUM | LOW
+  estimatedValue   Int?
+  notes            String?
+  lastFollowUpAt   DateTime?
+  nextFollowUpAt   DateTime?
+  lastContactAt    DateTime?
+  isSticky         Boolean   @default(false)
+  stickySince      DateTime?
+  status           String    @default("ACTIVE") // ACTIVE | CONVERTED | LOST
+  customerType     String? // NEW | REPEAT
+  campaignId       String?
+  campaign         Campaign? @relation(fields: [campaignId], references: [id])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  activities    Activity[]
+  followups     FollowUp[]
+  callLogs      CallLog[]
+  conversations WhatsAppConversation[]
+  quotations    Quotation[]
+  orders        SalesOrder[]
+  payments      Payment[]
+  shipments     Shipment[]
+  tickets       SupportTicket[]
+  meetings      Meeting[]
+  documents     Document[]
+}
+
+// Unified customer timeline entry
+model Activity {
+  id          String   @id @default(cuid())
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  type        String // CALL | WHATSAPP | NOTE | DISPOSITION | STAGE | ASSIGNMENT | FOLLOWUP | QUOTATION | ORDER | PAYMENT | DISPATCH | TICKET | MEETING | DOCUMENT | AI_CALL | BROADCAST | SYSTEM | LOGIN | LEAD
+  title       String
+  description String?
+  meta        String? // JSON
+  createdAt   DateTime @default(now())
+}
+
+model FollowUp {
+  id           String    @id @default(cuid())
+  leadId       String
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignedToId String?
+  assignedTo   User?     @relation("FollowUpOwner", fields: [assignedToId], references: [id])
+  createdById  String?
+  createdBy    User?     @relation("FollowUpCreator", fields: [createdById], references: [id])
+  dueAt        DateTime
+  status       String    @default("PENDING") // PENDING | COMPLETED | RESCHEDULED | NO_RESPONSE | ESCALATED
+  note         String?
+  completedAt  DateTime?
+  outcome      String?
+  createdAt    DateTime  @default(now())
+}
+
+// ---------------- TELECALLING ----------------
+
+model CallLog {
+  id            String   @id @default(cuid())
+  leadId        String?
+  lead          Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
+  direction     String // INCOMING | OUTGOING
+  status        String // CONNECTED | NOT_CONNECTED | MISSED
+  durationSec   Int      @default(0)
+  recordingUrl  String?
+  isVideo       Boolean  @default(false)
+  channel       String   @default("CRM") // CRM | WHATSAPP | AI_REMINDER
+  notes         String?
+  dispositionId String?
+  createdAt     DateTime @default(now())
+}
+
+// ---------------- WHATSAPP (WABA) ----------------
+
+model WhatsAppConversation {
+  id            String    @id @default(cuid())
+  leadId        String?
+  lead          Lead?     @relation(fields: [leadId], references: [id])
+  phone         String
+  name          String?
+  label         String?
+  dept          String?
+  ownerId       String?
+  owner         User?     @relation("ChatOwner", fields: [ownerId], references: [id])
+  unreadCount   Int       @default(0)
+  lastMessage   String?
+  lastMessageAt DateTime?
+  isPinned      Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  messages      WhatsAppMessage[]
+}
+
+model WhatsAppMessage {
+  id             String               @id @default(cuid())
+  conversationId String
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?                @relation(fields: [userId], references: [id])
+  direction      String // IN | OUT
+  type           String               @default("TEXT") // TEXT | IMAGE | PDF | VOICE | VIDEO | TEMPLATE | PRODUCT
+  body           String?
+  mediaName      String?
+  templateId     String?
+  status         String               @default("SENT") // SENT | DELIVERED | READ | FAILED
+  isPrivate      Boolean              @default(false)
+  campaignId     String?
+  campaign       Campaign?            @relation(fields: [campaignId], references: [id])
+  createdAt      DateTime             @default(now())
+}
+
+model WhatsAppTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  category  String // MARKETING | UTILITY | SESSION
+  body      String
+  dept      String? // null = all
+  variables String? // JSON array e.g. ["customerName","catalogLink"]
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ---------------- PRODUCT & CATALOG ----------------
+
+model Product {
+  id               String      @id @default(cuid())
+  code             String      @unique
+  name             String
+  categoryId       String?
+  category         MasterItem? @relation(fields: [categoryId], references: [id])
+  sku              String?
+  moq              Int         @default(1)
+  price            Int         @default(0) // in ₹
+  description      String?
+  packagingDetails String?
+  fabricDetails    String?
+  images           String? // JSON array of image urls
+  video            String?
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+}
+
+// ---------------- SALES WORKFLOW: Quote → Order → Invoice → Payment → Dispatch ----------------
+
+model Quotation {
+  id          String    @id @default(cuid())
+  quoteNo     String    @unique
+  leadId      String
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  department  String
+  items       String // JSON: [{productId,name,qty,price}]
+  subtotal    Int       @default(0)
+  discount    Int       @default(0)
+  total       Int       @default(0)
+  status      String    @default("DRAFT") // DRAFT | SENT | VIEWED | ACCEPTED | REJECTED | EXPIRED | CONVERTED
+  validUntil  DateTime?
+  notes       String?
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  orders      SalesOrder[]
+}
+
+model SalesOrder {
+  id            String     @id @default(cuid())
+  orderNo       String     @unique
+  leadId        String
+  lead          Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  quotationId   String?
+  quotation     Quotation? @relation(fields: [quotationId], references: [id])
+  department    String
+  items         String // JSON
+  total         Int        @default(0)
+  paidAmount    Int        @default(0)
+  paymentStatus String     @default("PENDING") // PENDING | PARTIAL | PAID
+  customerType  String     @default("NEW") // NEW | REPEAT
+  status        String     @default("CONFIRMED") // CONFIRMED | IN_PROCESS | DISPATCHED | DELIVERED | CANCELLED
+  notes         String?
+  createdById   String?
+  createdBy     User?      @relation(fields: [createdById], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  invoices      Invoice[]
+  shipment      Shipment?
+  payments      Payment[]
+}
+
+model Invoice {
+  id         String     @id @default(cuid())
+  invoiceNo  String     @unique
+  orderId    String
+  order      SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount     Int        @default(0)
+  paidAmount Int        @default(0)
+  status     String     @default("UNPAID") // UNPAID | PARTIAL | PAID | OVERDUE
+  dueDate    DateTime?
+  notes      String?
+  createdAt  DateTime   @default(now())
+  payments   Payment[]
+}
+
+model Payment {
+  id          String      @id @default(cuid())
+  receiptNo   String      @unique
+  leadId      String?
+  lead        Lead?       @relation(fields: [leadId], references: [id])
+  orderId     String?
+  order       SalesOrder? @relation(fields: [orderId], references: [id])
+  invoiceId   String?
+  invoice     Invoice?    @relation(fields: [invoiceId], references: [id])
+  department  String
+  amount      Int
+  mode        String      @default("BANK_TRANSFER") // CASH | UPI | BANK_TRANSFER | CHEQUE | CARD | OTHER
+  reference   String?
+  isAdvance   Boolean     @default(false)
+  notes       String?
+  paidAt      DateTime    @default(now())
+  createdById String?
+  createdBy   User?       @relation(fields: [createdById], references: [id])
+  createdAt   DateTime    @default(now())
+}
+
+model Shipment {
+  id           String     @id @default(cuid())
+  orderId      String     @unique
+  order        SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  leadId       String?
+  lead         Lead?      @relation(fields: [leadId], references: [id])
+  department   String
+  stage        String     @default("PACKING") // PACKING | QC | DISPATCHED | IN_TRANSIT | DELIVERED
+  courierName  String?
+  awbNumber    String?
+  trackingUrl  String?
+  proofUrl     String?
+  dispatchedAt DateTime?
+  deliveredAt  DateTime?
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+// ---------------- CUSTOMER SUPPORT ----------------
+
+model SupportTicket {
+  id           String    @id @default(cuid())
+  ticketNo     String    @unique
+  leadId       String?
+  lead         Lead?     @relation(fields: [leadId], references: [id])
+  department   String
+  type         String // Shipment Delay | Product Complaint | Damage Issue | Replacement Request | Payment Issue
+  priority     String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  subject      String
+  description  String?
+  status       String    @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED | ESCALATED
+  slaDueAt     DateTime?
+  assignedToId String?
+  assignedTo   User?     @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  createdById  String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  comments     TicketComment[]
+}
+
+model TicketComment {
+  id         String        @id @default(cuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?         @relation(fields: [userId], references: [id])
+  body       String
+  isInternal Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+}
+
+// ---------------- MARKETING & ENGAGEMENT ----------------
+
+model Campaign {
+  id          String    @id @default(cuid())
+  name        String
+  type        String    @default("OUTGOING") // INCOMING | OUTGOING | BROADCAST
+  channel     String    @default("WHATSAPP") // WHATSAPP | CALL | SMS | EMAIL
+  department  String?
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      Int       @default(0)
+  status      String    @default("ACTIVE") // ACTIVE | PAUSED | COMPLETED
+  conversions Int       @default(0)
+  revenue     Int       @default(0)
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  leads       Lead[]
+  messages    WhatsAppMessage[]
+}
+
+model Meeting {
+  id             String    @id @default(cuid())
+  leadId         String
+  lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  title          String
+  scheduledAt    DateTime
+  executiveId    String?
+  executive      User?     @relation(fields: [executiveId], references: [id])
+  link           String?
+  outcome        String? // COMPLETED | NO_SHOW | RESCHEDULED | INTERESTED | NOT_INTERESTED
+  notes          String?
+  followUpAction String?
+  createdAt      DateTime  @default(now())
+}
+
+model Document {
+  id           String    @id @default(cuid())
+  leadId       String?
+  lead         Lead?     @relation(fields: [leadId], references: [id])
+  name         String
+  type         String    @default("OTHER") // QUOTATION | INVOICE | PACKING_LIST | SHIPPING | PRODUCT_PDF | AGREEMENT | OTHER
+  url          String?
+  version      Int       @default(1)
+  expiryDate   DateTime?
+  uploadedById String?
+  uploadedBy   User?     @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+}
+
+// ---------------- TARGETS, NOTIFICATIONS, AUDIT, SETTINGS ----------------
+
+model Target {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  month  String // YYYY-MM
+  amount Int    @default(0) // in ₹
+
+  @@unique([userId, month])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String?
+  type      String   @default("INFO") // INFO | LEAD | PAYMENT | SHIPMENT | TICKET | CALL | WHATSAPP | ALERT
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  userName  String?
+  action    String
+  entity    String?
+  entityId  String?
+  details   String? // JSON
+  ip        String?
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

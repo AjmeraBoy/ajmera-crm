@@ -1,0 +1,1029 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useState } from 'react'
+     4→import {
+     5→  Download,
+     6→  Loader2,
+     7→  MessageCircle,
+     8→  MoreHorizontal,
+     9→  Phone,
+    10→  Pin,
+    11→  Plus,
+    12→  RefreshCw,
+    13→  Trash2,
+    14→  Upload,
+    15→  UserCog,
+    16→  X,
+    17→} from 'lucide-react'
+    18→import { Button } from '@/components/ui/button'
+    19→import { Checkbox } from '@/components/ui/checkbox'
+    20→import { Input } from '@/components/ui/input'
+    21→import { Label } from '@/components/ui/label'
+    22→import { Switch } from '@/components/ui/switch'
+    23→import { Badge } from '@/components/ui/badge'
+    24→import {
+    25→  AlertDialog,
+    26→  AlertDialogAction,
+    27→  AlertDialogCancel,
+    28→  AlertDialogContent,
+    29→  AlertDialogDescription,
+    30→  AlertDialogFooter,
+    31→  AlertDialogHeader,
+    32→  AlertDialogTitle,
+    33→} from '@/components/ui/alert-dialog'
+    34→import {
+    35→  Dialog,
+    36→  DialogContent,
+    37→  DialogDescription,
+    38→  DialogFooter,
+    39→  DialogHeader,
+    40→  DialogTitle,
+    41→} from '@/components/ui/dialog'
+    42→import {
+    43→  DropdownMenu,
+    44→  DropdownMenuContent,
+    45→  DropdownMenuItem,
+    46→  DropdownMenuSeparator,
+    47→  DropdownMenuTrigger,
+    48→} from '@/components/ui/dropdown-menu'
+    49→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    50→import { useToast } from '@/hooks/use-toast'
+    51→import { api, downloadCSV, qs } from '@/lib/client'
+    52→import { formatDateTime, formatINR } from '@/lib/format'
+    53→import { cn } from '@/lib/utils'
+    54→import {
+    55→  DEPARTMENTS,
+    56→  DEPT_LABELS,
+    57→  LEAD_STATUSES,
+    58→  PRIORITIES,
+    59→} from '@/lib/constants'
+    60→import { PageHeader } from '@/components/crm/shared/page-header'
+    61→import { DataTable, type Column } from '@/components/crm/shared/data-table'
+    62→import { FilterBar } from '@/components/crm/shared/filter-bar'
+    63→import { StatusBadge } from '@/components/crm/shared/status-badge'
+    64→import { UserAvatar } from '@/components/crm/shared/avatar'
+    65→import { masterExtra, useMasters } from '@/components/crm/shared/use-masters'
+    66→import { useAppStore } from '@/store/app-store'
+    67→import LeadFormDialog, { SearchableSelect, type MasterOption } from '@/components/crm/leads/lead-form-dialog'
+    68→
+    69→// ---------- types ----------
+    70→
+    71→type LeadRow = {
+    72→  id: string
+    73→  leadCode: string
+    74→  department: string
+    75→  customerName: string
+    76→  companyName: string | null
+    77→  mobile: string
+    78→  whatsapp: string | null
+    79→  email: string | null
+    80→  city: string | null
+    81→  productInterest: string | null
+    82→  requirementNotes: string | null
+    83→  monthlyVolume: number | null
+    84→  budget: number | null
+    85→  notes: string | null
+    86→  visitDate: string | null
+    87→  visitTime: string | null
+    88→  businessTypeId: string | null
+    89→  stateId: string | null
+    90→  countryId: string | null
+    91→  sourceId: string | null
+    92→  stageId: string | null
+    93→  state: { id: string; label: string } | null
+    94→  country: { id: string; label: string } | null
+    95→  source: { id: string; label: string } | null
+    96→  stage: { id: string; label: string; extra: string | null } | null
+    97→  disposition: { id: string; label: string } | null
+    98→  subDisposition: { id: string; label: string } | null
+    99→  priority: string | null
+   100→  estimatedValue: number | null
+   101→  nextFollowUpAt: string | null
+   102→  lastContactAt: string | null
+   103→  isSticky: boolean
+   104→  status: string
+   105→  createdAt: string
+   106→  assignedTo: { id: string; name: string } | null
+   107→}
+   108→
+   109→type LeadsResponse = {
+   110→  leads: LeadRow[]
+   111→  total: number
+   112→  page: number
+   113→  pageSize: number
+   114→  summary: { total: number; active: number; converted: number; lost: number; sticky: number }
+   115→}
+   116→
+   117→type ExportRow = {
+   118→  leadCode: string
+   119→  customerName: string
+   120→  companyName: string | null
+   121→  mobile: string
+   122→  whatsapp: string | null
+   123→  city: string | null
+   124→  state: string | null
+   125→  country: string | null
+   126→  source: string | null
+   127→  stage: string | null
+   128→  disposition: string | null
+   129→  subDisposition: string | null
+   130→  priority: string | null
+   131→  estimatedValue: number | null
+   132→  assignedTo: string | null
+   133→  status: string
+   134→  nextFollowUpAt: string | null
+   135→  createdAt: string
+   136→}
+   137→
+   138→type ExecUser = { id: string; name: string; role: string; department: string | null; isActive: boolean }
+   139→
+   140→type Filters = {
+   141→  q: string
+   142→  dept: string
+   143→  stageId: string
+   144→  dispositionId: string
+   145→  sourceId: string
+   146→  priority: string
+   147→  status: string
+   148→  sticky: boolean
+   149→  assignedToId: string
+   150→  from: string
+   151→  to: string
+   152→  followup: '' | 'today' | 'overdue' | 'upcoming'
+   153→}
+   154→
+   155→const MANAGEMENT_ROLES = ['TEAM_LEADER', 'MANAGER', 'ADMIN', 'SUPER_ADMIN']
+   156→const PAGE_SIZE = 20
+   157→
+   158→function defaultFilters(dept: string): Filters {
+   159→  return {
+   160→    q: '', dept, stageId: '', dispositionId: '', sourceId: '', priority: '', status: '',
+   161→    sticky: false, assignedToId: '', from: '', to: '', followup: '',
+   162→  }
+   163→}
+   164→
+   165→// ---------- component ----------
+   166→
+   167→export default function LeadsView() {
+   168→  const user = useAppStore((s) => s.user)
+   169→  const setView = useAppStore((s) => s.setView)
+   170→  const { toast } = useToast()
+   171→  const masters = useMasters()
+   172→
+   173→  const isManagement = MANAGEMENT_ROLES.includes(user?.role ?? '')
+   174→  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN'
+   175→  const canPickDept = !user?.department
+   176→
+   177→  const [filters, setFilters] = useState<Filters>(() => defaultFilters(user?.department ?? ''))
+   178→  const [qInput, setQInput] = useState('')
+   179→  const [page, setPage] = useState(1)
+   180→  const [data, setData] = useState<LeadsResponse | null>(null)
+   181→  const [loading, setLoading] = useState(true)
+   182→  const [reloadKey, setReloadKey] = useState(0)
+   183→
+   184→  const [execs, setExecs] = useState<ExecUser[]>([])
+   185→  const [selected, setSelected] = useState<Set<string>>(new Set())
+   186→
+   187→  const [formOpen, setFormOpen] = useState(false)
+   188→  const [editLead, setEditLead] = useState<LeadRow | null>(null)
+   189→  const [assignOpen, setAssignOpen] = useState(false)
+   190→  const [assignIds, setAssignIds] = useState<string[]>([])
+   191→  const [assignTarget, setAssignTarget] = useState('')
+   192→  const [assigning, setAssigning] = useState(false)
+   193→  const [importOpen, setImportOpen] = useState(false)
+   194→  const [deleteLead, setDeleteLead] = useState<LeadRow | null>(null)
+   195→  const [deleting, setDeleting] = useState(false)
+   196→  const [exporting, setExporting] = useState(false)
+   197→
+   198→  // debounce search input
+   199→  useEffect(() => {
+   200→    const t = setTimeout(() => {
+   201→      setFilters((f) => (f.q === qInput ? f : { ...f, q: qInput }))
+   202→      setPage(1)
+   203→    }, 400)
+   204→    return () => clearTimeout(t)
+   205→  }, [qInput])
+   206→
+   207→  const buildParams = useCallback(
+   208→    (forExport = false) => ({
+   209→      q: filters.q || undefined,
+   210→      dept: filters.dept || undefined,
+   211→      stageId: filters.stageId || undefined,
+   212→      dispositionId: filters.dispositionId || undefined,
+   213→      sourceId: filters.sourceId || undefined,
+   214→      priority: filters.priority || undefined,
+   215→      status: filters.status || undefined,
+   216→      sticky: filters.sticky ? 1 : undefined,
+   217→      assignedToId: filters.assignedToId || undefined,
+   218→      from: filters.from || undefined,
+   219→      to: filters.to || undefined,
+   220→      followup: filters.followup || undefined,
+   221→      ...(forExport ? {} : { page, pageSize: PAGE_SIZE }),
+   222→    }),
+   223→    [filters, page]
+   224→  )
+   225→
+   226→  const load = useCallback(async () => {
+   227→    setLoading(true)
+   228→    try {
+   229→      const res = await api<LeadsResponse>(`/api/leads${qs(buildParams())}`)
+   230→      setData(res)
+   231→    } catch (e) {
+   232→      toast({ title: 'Failed to load leads', description: (e as Error).message, variant: 'destructive' })
+   233→    } finally {
+   234→      setLoading(false)
+   235→    }
+   236→  }, [buildParams, toast])
+   237→
+   238→  useEffect(() => {
+   239→    load()
+   240→  }, [load, reloadKey])
+   241→
+   242→  // executives for "Assigned to" filter + assignment dialogs
+   243→  useEffect(() => {
+   244→    const dept = user?.department ?? filters.dept
+   245→    api<{ users: ExecUser[] }>(`/api/users${qs({ role: 'EXECUTIVE', active: 1, dept: dept || undefined })}`)
+   246→      .then((res) => setExecs(res.users ?? []))
+   247→      .catch(() => setExecs([]))
+   248→  }, [user?.department, filters.dept])
+   249→
+   250→  const execOptions = useMemo<MasterOption[]>(() => execs.map((u) => ({ id: u.id, label: u.name })), [execs])
+   251→
+   252→  const setFilter = <K extends keyof Filters>(key: K, value: Filters[K]) => {
+   253→    setFilters((f) => ({ ...f, [key]: value }))
+   254→    setPage(1)
+   255→    setSelected(new Set())
+   256→  }
+   257→
+   258→  const resetFilters = () => {
+   259→    setFilters(defaultFilters(user?.department ?? ''))
+   260→    setQInput('')
+   261→    setPage(1)
+   262→    setSelected(new Set())
+   263→  }
+   264→
+   265→  // ---------- summary chips ----------
+   266→  const summary = data?.summary
+   267→  const chips: { key: string; label: string; count: number; active: boolean; onClick: () => void }[] = [
+   268→    {
+   269→      key: 'all', label: 'Total', count: summary?.total ?? 0,
+   270→      active: !filters.status && !filters.sticky,
+   271→      onClick: () => {
+   272→        setFilters((f) => ({ ...f, status: '', sticky: false }))
+   273→        setPage(1)
+   274→        setSelected(new Set())
+   275→      },
+   276→    },
+   277→    {
+   278→      key: 'active', label: 'Active', count: summary?.active ?? 0,
+   279→      active: filters.status === 'ACTIVE' && !filters.sticky,
+   280→      onClick: () => setFilter('status', 'ACTIVE'),
+   281→    },
+   282→    {
+   283→      key: 'converted', label: 'Converted', count: summary?.converted ?? 0,
+   284→      active: filters.status === 'CONVERTED',
+   285→      onClick: () => setFilter('status', 'CONVERTED'),
+   286→    },
+   287→    {
+   288→      key: 'lost', label: 'Lost', count: summary?.lost ?? 0,
+   289→      active: filters.status === 'LOST',
+   290→      onClick: () => setFilter('status', 'LOST'),
+   291→    },
+   292→    {
+   293→      key: 'sticky', label: 'Sticky', count: summary?.sticky ?? 0,
+   294→      active: filters.sticky,
+   295→      onClick: () => {
+   296→        setFilters((f) => ({ ...f, sticky: !f.sticky, status: '' }))
+   297→        setPage(1)
+   298→      },
+   299→    },
+   300→  ]
+   301→
+   302→  // ---------- actions ----------
+   303→  const openLead = (lead: LeadRow) => setView('lead-detail', { leadId: lead.id })
+   304→
+   305→  const exportCsv = async () => {
+   306→    setExporting(true)
+   307→    try {
+   308→      const res = await api<{ rows: ExportRow[] }>(`/api/leads/export${qs(buildParams(true))}`)
+   309→      const rows = (res.rows ?? []).map((r) => ({
+   310→        ...r,
+   311→        estimatedValue: r.estimatedValue ?? 0,
+   312→        nextFollowUpAt: r.nextFollowUpAt ? formatDateTime(r.nextFollowUpAt) : '',
+   313→        createdAt: r.createdAt ? formatDateTime(r.createdAt) : '',
+   314→      }))
+   315→      downloadCSV(`leads-${new Date().toISOString().slice(0, 10)}.csv`, rows)
+   316→      toast({ title: 'Export ready', description: `${rows.length} leads exported to CSV` })
+   317→    } catch (e) {
+   318→      toast({ title: 'Export failed', description: (e as Error).message, variant: 'destructive' })
+   319→    } finally {
+   320→      setExporting(false)
+   321→    }
+   322→  }
+   323→
+   324→  const submitAssign = async (ids: string[]) => {
+   325→    if (ids.length === 0) return
+   326→    if (!assignTarget) {
+   327→      toast({ title: 'Select an executive', variant: 'destructive' })
+   328→      return
+   329→    }
+   330→    setAssigning(true)
+   331→    try {
+   332→      const res = await api<{ updated: number }>('/api/leads/assign', {
+   333→        method: 'POST',
+   334→        body: { leadIds: ids, assignedToId: assignTarget },
+   335→      })
+   336→      toast({ title: 'Leads reassigned', description: `${res.updated} lead(s) assigned successfully` })
+   337→      setAssignOpen(false)
+   338→      setAssignTarget('')
+   339→      setSelected(new Set())
+   340→      setReloadKey((k) => k + 1)
+   341→    } catch (e) {
+   342→      toast({ title: 'Reassign failed', description: (e as Error).message, variant: 'destructive' })
+   343→    } finally {
+   344→      setAssigning(false)
+   345→    }
+   346→  }
+   347→
+   348→  const confirmDelete = async () => {
+   349→    if (!deleteLead) return
+   350→    setDeleting(true)
+   351→    try {
+   352→      await api(`/api/leads${qs({ id: deleteLead.id })}`, { method: 'DELETE' })
+   353→      toast({ title: 'Lead deleted', description: `${deleteLead.leadCode} removed` })
+   354→      setDeleteLead(null)
+   355→      setReloadKey((k) => k + 1)
+   356→    } catch (e) {
+   357→      toast({ title: 'Delete failed', description: (e as Error).message, variant: 'destructive' })
+   358→    } finally {
+   359→      setDeleting(false)
+   360→    }
+   361→  }
+   362→
+   363→  // ---------- bulk selection ----------
+   364→  const rowIds = (data?.leads ?? []).map((l) => l.id)
+   365→  const allSelected = rowIds.length > 0 && rowIds.every((id) => selected.has(id))
+   366→  const toggleAll = () => {
+   367→    setSelected(allSelected ? new Set() : new Set(rowIds))
+   368→  }
+   369→  const toggleOne = (id: string) => {
+   370→    setSelected((prev) => {
+   371→      const next = new Set(prev)
+   372→      if (next.has(id)) next.delete(id)
+   373→      else next.add(id)
+   374→      return next
+   375→    })
+   376→  }
+   377→
+   378→  // ---------- table columns ----------
+   379→  const stageOptions = useMemo<MasterOption[]>(
+   380→    () => masters.items('pipeline_stage', filters.dept || user?.department || undefined).map((m) => ({ id: m.id, label: m.label })),
+   381→    [masters, filters.dept, user?.department]
+   382→  )
+   383→  const dispositionOptions = useMemo<MasterOption[]>(
+   384→    () => masters.items('disposition', filters.dept || user?.department || undefined).map((m) => ({ id: m.id, label: m.label })),
+   385→    [masters, filters.dept, user?.department]
+   386→  )
+   387→  const sourceOptions = useMemo<MasterOption[]>(
+   388→    () => masters.items('lead_source', filters.dept || user?.department || undefined).map((m) => ({ id: m.id, label: m.label })),
+   389→    [masters, filters.dept, user?.department]
+   390→  )
+   391→
+   392→  const isOverdue = (d: string | null) => Boolean(d && new Date(d).getTime() < Date.now())
+   393→
+   394→  const columns: Column<LeadRow>[] = useMemo(() => {
+   395→    const cols: Column<LeadRow>[] = []
+   396→    if (isManagement) {
+   397→      cols.push({
+   398→        key: 'sel',
+   399→        header: '',
+   400→        className: 'w-10',
+   401→        render: (row) => (
+   402→          <div onClick={(e) => e.stopPropagation()}>
+   403→            <Checkbox
+   404→              checked={selected.has(row.id)}
+   405→              onCheckedChange={() => toggleOne(row.id)}
+   406→              aria-label={`Select lead ${row.leadCode}`}
+   407→            />
+   408→          </div>
+   409→        ),
+   410→      })
+   411→    }
+   412→    cols.push(
+   413→      {
+   414→        key: 'leadCode',
+   415→        header: 'Lead ID',
+   416→        render: (row) => (
+   417→          <div className="flex items-center gap-1.5">
+   418→            <span className="font-mono text-xs font-bold text-stone-800">{row.leadCode}</span>
+   419→            {row.isSticky ? <Pin className="h-3 w-3 text-amber-500" aria-label="Sticky lead" /> : null}
+   420→            <StatusBadge status={row.department} variant="dept" className="ml-1 hidden md:inline-flex" />
+   421→          </div>
+   422→        ),
+   423→      },
+   424→      {
+   425→        key: 'customerName',
+   426→        header: 'Customer',
+   427→        render: (row) => (
+   428→          <div className="min-w-[140px]">
+   429→            <p className="font-medium text-stone-800">{row.customerName}</p>
+   430→            {row.companyName ? <p className="text-xs text-stone-500">{row.companyName}</p> : null}
+   431→            {row.city ? <p className="text-xs text-stone-400">{row.city}{row.state ? `, ${row.state.label}` : row.country ? `, ${row.country.label}` : ''}</p> : null}
+   432→          </div>
+   433→        ),
+   434→      },
+   435→      {
+   436→        key: 'mobile',
+   437→        header: 'Contact',
+   438→        render: (row) => (
+   439→          <div className="min-w-[120px]">
+   440→            <p className="text-sm">{row.mobile}</p>
+   441→            {row.whatsapp && row.whatsapp !== row.mobile ? <p className="text-xs text-stone-500">WA: {row.whatsapp}</p> : null}
+   442→            {row.email ? <p className="truncate text-xs text-stone-400">{row.email}</p> : null}
+   443→          </div>
+   444→        ),
+   445→      },
+   446→      {
+   447→        key: 'stage',
+   448→        header: 'Stage',
+   449→        render: (row) => {
+   450→          const color = String(masterExtra(row.stage?.extra).color ?? '')
+   451→          return row.stage ? (
+   452→            <Badge variant="outline" className="gap-1.5 whitespace-nowrap border-stone-200 font-medium text-stone-700">
+   453→              <span className="h-2 w-2 rounded-full" style={color ? { backgroundColor: color } : { backgroundColor: '#a8a29e' }} aria-hidden />
+   454→              {row.stage.label}
+   455→            </Badge>
+   456→          ) : (
+   457→            <span className="text-stone-400">—</span>
+   458→          )
+   459→        },
+   460→      },
+   461→      {
+   462→        key: 'disposition',
+   463→        header: 'Disposition',
+   464→        render: (row) => (
+   465→          <div className="min-w-[110px]">
+   466→            <p className="whitespace-nowrap">{row.disposition?.label ?? <span className="text-stone-400">—</span>}</p>
+   467→            {row.subDisposition ? <p className="text-xs text-stone-400">{row.subDisposition.label}</p> : null}
+   468→          </div>
+   469→        ),
+   470→      },
+   471→      {
+   472→        key: 'priority',
+   473→        header: 'Priority',
+   474→        render: (row) => <StatusBadge status={row.priority} variant="priority" />,
+   475→      },
+   476→      {
+   477→        key: 'estimatedValue',
+   478→        header: 'Value',
+   479→        className: 'text-right',
+   480→        render: (row) => (
+   481→          <span className="font-medium text-emerald-700">{row.estimatedValue ? formatINR(row.estimatedValue) : '—'}</span>
+   482→        ),
+   483→      },
+   484→      {
+   485→        key: 'owner',
+   486→        header: 'Owner',
+   487→        render: (row) =>
+   488→          row.assignedTo ? (
+   489→            <div className="flex items-center gap-2">
+   490→              <UserAvatar name={row.assignedTo.name} className="h-6 w-6" />
+   491→              <span className="whitespace-nowrap text-xs">{row.assignedTo.name}</span>
+   492→            </div>
+   493→          ) : (
+   494→            <span className="text-stone-400">Unassigned</span>
+   495→          ),
+   496→      },
+   497→      {
+   498→        key: 'nextFollowUpAt',
+   499→        header: 'Next Follow-up',
+   500→        render: (row) =>
+   501→          row.nextFollowUpAt ? (
+   502→            <span className={cn('whitespace-nowrap text-xs', isOverdue(row.nextFollowUpAt) && 'font-semibold text-rose-600')}>
+   503→              {formatDateTime(row.nextFollowUpAt)}
+   504→            </span>
+   505→          ) : (
+   506→            <span className="text-stone-400">—</span>
+   507→          ),
+   508→      },
+   509→      {
+   510→        key: 'status',
+   511→        header: 'Status',
+   512→        render: (row) => <StatusBadge status={row.status} variant="leadStatus" />,
+   513→      },
+   514→      {
+   515→        key: 'actions',
+   516→        header: '',
+   517→        className: 'w-12',
+   518→        render: (row) => (
+   519→          <div onClick={(e) => e.stopPropagation()}>
+   520→            <DropdownMenu>
+   521→              <DropdownMenuTrigger asChild>
+   522→                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Actions for ${row.leadCode}`}>
+   523→                  <MoreHorizontal className="h-4 w-4" aria-hidden />
+   524→                </Button>
+   525→              </DropdownMenuTrigger>
+   526→              <DropdownMenuContent align="end">
+   527→                <DropdownMenuItem onClick={() => openLead(row)}>Open 360° view</DropdownMenuItem>
+   528→                <DropdownMenuItem onClick={() => setView('dialer', { leadId: row.id })}>
+   529→                  <Phone className="mr-2 h-4 w-4" aria-hidden /> Call
+   530→                </DropdownMenuItem>
+   531→                <DropdownMenuItem onClick={() => setView('whatsapp', { leadId: row.id })}>
+   532→                  <MessageCircle className="mr-2 h-4 w-4" aria-hidden /> WhatsApp
+   533→                </DropdownMenuItem>
+   534→                {isManagement ? (
+   535→                  <DropdownMenuItem
+   536→                    onClick={() => {
+   537→                      setAssignIds([row.id])
+   538→                      setAssignTarget(row.assignedTo?.id ?? '')
+   539→                      setAssignOpen(true)
+   540→                    }}
+   541→                  >
+   542→                    <UserCog className="mr-2 h-4 w-4" aria-hidden /> Assign / Reassign
+   543→                  </DropdownMenuItem>
+   544→                ) : null}
+   545→                {isAdmin ? (
+   546→                  <>
+   547→                    <DropdownMenuSeparator />
+   548→                    <DropdownMenuItem className="text-rose-600 focus:text-rose-700" onClick={() => setDeleteLead(row)}>
+   549→                      <Trash2 className="mr-2 h-4 w-4" aria-hidden /> Delete
+   550→                    </DropdownMenuItem>
+   551→                  </>
+   552→                ) : null}
+   553→              </DropdownMenuContent>
+   554→            </DropdownMenu>
+   555→          </div>
+   556→        ),
+   557→      }
+   558→    )
+   559→    return cols
+   560→    // eslint-disable-next-line react-hooks/exhaustive-deps
+   561→  }, [isManagement, isAdmin, selected, masters, filters.dept, user?.department])
+   562→
+   563→  const total = data?.total ?? 0
+   564→  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+   565→  const fromIdx = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
+   566→  const toIdx = Math.min(total, page * PAGE_SIZE)
+   567→
+   568→  return (
+   569→    <div>
+   570→      <PageHeader title="Leads" subtitle="Track, qualify and convert every enquiry">
+   571→        <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)} aria-label="Refresh leads">
+   572→          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden />
+   573→          <span className="ml-1 hidden sm:inline">Refresh</span>
+   574→        </Button>
+   575→        <Button variant="outline" size="sm" onClick={exportCsv} disabled={exporting} aria-label="Export leads as CSV">
+   576→          {exporting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
+   577→          <span className="ml-1">Export CSV</span>
+   578→        </Button>
+   579→        {isManagement ? (
+   580→          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} aria-label="Import leads">
+   581→            <Upload className="h-4 w-4" aria-hidden />
+   582→            <span className="ml-1">Import Leads</span>
+   583→          </Button>
+   584→        ) : null}
+   585→        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setEditLead(null); setFormOpen(true) }}>
+   586→          <Plus className="h-4 w-4" aria-hidden />
+   587→          <span className="ml-1">New Lead</span>
+   588→        </Button>
+   589→      </PageHeader>
+   590→
+   591→      {/* summary chips */}
+   592→      <div className="mb-3 flex flex-wrap items-center gap-2">
+   593→        {chips.map((c) => (
+   594→          <button
+   595→            key={c.key}
+   596→            type="button"
+   597→            onClick={c.onClick}
+   598→            aria-pressed={c.active}
+   599→            className={cn(
+   600→              'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+   601→              c.active
+   602→                ? 'border-emerald-600 bg-emerald-600 text-white'
+   603→                : 'border-stone-200 bg-white text-stone-600 hover:border-emerald-300 hover:text-emerald-700'
+   604→            )}
+   605→          >
+   606→            {c.label} <span className={cn('font-bold', c.active ? 'text-emerald-100' : 'text-stone-900')}>{c.count}</span>
+   607→          </button>
+   608→        ))}
+   609→      </div>
+   610→
+   611→      <FilterBar>
+   612→        <Input
+   613→          value={qInput}
+   614→          onChange={(e) => setQInput(e.target.value)}
+   615→          placeholder="Search name, mobile, company, code…"
+   616→          className="h-9 w-full sm:w-56"
+   617→          aria-label="Search leads"
+   618→        />
+   619→        {canPickDept ? (
+   620→          <Select value={filters.dept} onValueChange={(v) => setFilter('dept', v)}>
+   621→            <SelectTrigger className="h-9 w-[140px]" aria-label="Department filter"><SelectValue placeholder="All Departments" /></SelectTrigger>
+   622→            <SelectContent>
+   623→              <SelectItem value="all">All Departments</SelectItem>
+   624→              {DEPARTMENTS.map((d) => (
+   625→                <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   626→              ))}
+   627→            </SelectContent>
+   628→          </Select>
+   629→        ) : null}
+   630→        <Select value={filters.stageId} onValueChange={(v) => setFilter('stageId', v)}>
+   631→          <SelectTrigger className="h-9 w-[150px]" aria-label="Stage filter"><SelectValue placeholder="Stage: All" /></SelectTrigger>
+   632→          <SelectContent>
+   633→            <SelectItem value="all">Stage: All</SelectItem>
+   634→            {stageOptions.map((s) => (
+   635→              <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+   636→            ))}
+   637→          </SelectContent>
+   638→        </Select>
+   639→        <Select value={filters.dispositionId} onValueChange={(v) => setFilter('dispositionId', v)}>
+   640→          <SelectTrigger className="h-9 w-[160px]" aria-label="Disposition filter"><SelectValue placeholder="Disposition: All" /></SelectTrigger>
+   641→          <SelectContent>
+   642→            <SelectItem value="all">Disposition: All</SelectItem>
+   643→            {dispositionOptions.map((d) => (
+   644→              <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>
+   645→            ))}
+   646→          </SelectContent>
+   647→        </Select>
+   648→        <Select value={filters.sourceId} onValueChange={(v) => setFilter('sourceId', v)}>
+   649→          <SelectTrigger className="h-9 w-[140px]" aria-label="Source filter"><SelectValue placeholder="Source: All" /></SelectTrigger>
+   650→          <SelectContent>
+   651→            <SelectItem value="all">Source: All</SelectItem>
+   652→            {sourceOptions.map((s) => (
+   653→              <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+   654→            ))}
+   655→          </SelectContent>
+   656→        </Select>
+   657→        <Select value={filters.priority} onValueChange={(v) => setFilter('priority', v)}>
+   658→          <SelectTrigger className="h-9 w-[130px]" aria-label="Priority filter"><SelectValue placeholder="Priority: All" /></SelectTrigger>
+   659→          <SelectContent>
+   660→            <SelectItem value="all">Priority: All</SelectItem>
+   661→            {PRIORITIES.map((p) => (
+   662→              <SelectItem key={p} value={p}>{p}</SelectItem>
+   663→            ))}
+   664→          </SelectContent>
+   665→        </Select>
+   666→        <Select value={filters.status} onValueChange={(v) => setFilter('status', v)}>
+   667→          <SelectTrigger className="h-9 w-[130px]" aria-label="Status filter"><SelectValue placeholder="Status: All" /></SelectTrigger>
+   668→          <SelectContent>
+   669→            <SelectItem value="all">Status: All</SelectItem>
+   670→            {LEAD_STATUSES.map((s) => (
+   671→              <SelectItem key={s} value={s}>{s}</SelectItem>
+   672→            ))}
+   673→          </SelectContent>
+   674→        </Select>
+   675→        {isManagement ? (
+   676→          <Select value={filters.assignedToId} onValueChange={(v) => setFilter('assignedToId', v)}>
+   677→            <SelectTrigger className="h-9 w-[150px]" aria-label="Assigned to filter"><SelectValue placeholder="Owner: All" /></SelectTrigger>
+   678→            <SelectContent>
+   679→              <SelectItem value="all">Owner: All</SelectItem>
+   680→              {execOptions.map((o) => (
+   681→                <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+   682→              ))}
+   683→            </SelectContent>
+   684→          </Select>
+   685→        ) : null}
+   686→        <div className="flex items-center gap-2">
+   687→          <Input type="date" value={filters.from} onChange={(e) => setFilter('from', e.target.value)} className="h-9 w-[140px]" aria-label="Created from date" />
+   688→          <span className="text-xs text-stone-400">to</span>
+   689→          <Input type="date" value={filters.to} onChange={(e) => setFilter('to', e.target.value)} className="h-9 w-[140px]" aria-label="Created to date" />
+   690→        </div>
+   691→        <label className="flex items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-sm">
+   692→          <Switch checked={filters.sticky} onCheckedChange={(v) => setFilter('sticky', v)} aria-label="Only sticky leads" />
+   693→          <span className="flex items-center gap-1 text-stone-600">
+   694→            <Pin className="h-3.5 w-3.5 text-amber-500" aria-hidden /> Sticky only
+   695→          </span>
+   696→        </label>
+   697→        <Button variant="ghost" size="sm" onClick={resetFilters} aria-label="Reset all filters">
+   698→          <X className="h-4 w-4" aria-hidden /> Reset
+   699→        </Button>
+   700→      </FilterBar>
+   701→
+   702→      {/* follow-up quick filter chips */}
+   703→      <div className="mb-3 flex flex-wrap items-center gap-2">
+   704→        <span className="text-xs font-medium uppercase tracking-wide text-stone-400">Follow-ups:</span>
+   705→        {([
+   706→          { key: '', label: 'All' },
+   707→          { key: 'today', label: 'Today' },
+   708→          { key: 'overdue', label: 'Overdue' },
+   709→          { key: 'upcoming', label: 'Upcoming' },
+   710→        ] as const).map((f) => (
+   711→          <button
+   712→            key={f.key}
+   713→            type="button"
+   714→            onClick={() => setFilter('followup', f.key as Filters['followup'])}
+   715→            aria-pressed={filters.followup === f.key}
+   716→            className={cn(
+   717→              'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+   718→              filters.followup === f.key
+   719→                ? 'border-stone-800 bg-stone-800 text-white'
+   720→                : 'border-stone-200 bg-white text-stone-600 hover:border-stone-400'
+   721→            )}
+   722→          >
+   723→            {f.label}
+   724→          </button>
+   725→        ))}
+   726→      </div>
+   727→
+   728→      <DataTable
+   729→        columns={columns}
+   730→        rows={data?.leads ?? []}
+   731→        loading={loading}
+   732→        onRowClick={openLead}
+   733→        emptyMessage="No leads match the current filters"
+   734→      />
+   735→
+   736→      {/* pagination */}
+   737→      <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
+   738→        <p className="text-xs text-stone-500">
+   739→          Showing {fromIdx}–{toIdx} of {total} leads
+   740→        </p>
+   741→        <div className="flex items-center gap-2">
+   742→          <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+   743→            Previous
+   744→          </Button>
+   745→          <span className="text-xs text-stone-600">Page {page} of {totalPages}</span>
+   746→          <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+   747→            Next
+   748→          </Button>
+   749→        </div>
+   750→      </div>
+   751→
+   752→      {/* floating bulk assign bar */}
+   753→      {isManagement && selected.size > 0 ? (
+   754→        <div className="fixed bottom-6 left-1/2 z-50 w-[92%] max-w-xl -translate-x-1/2 rounded-xl border border-stone-200 bg-white p-3 shadow-lg">
+   755→          <div className="flex flex-wrap items-center gap-2">
+   756→            <span className="text-sm font-medium text-stone-700">{selected.size} selected</span>
+   757→            <Select value={assignTarget} onValueChange={setAssignTarget}>
+   758→              <SelectTrigger className="h-9 min-w-[160px] flex-1" aria-label="Assign selected leads to executive">
+   759→                <SelectValue placeholder="Assign to…" />
+   760→              </SelectTrigger>
+   761→              <SelectContent>
+   762→                {execOptions.map((o) => (
+   763→                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+   764→                ))}
+   765→              </SelectContent>
+   766→            </Select>
+   767→            <Button
+   768→              size="sm"
+   769→              className="bg-emerald-600 hover:bg-emerald-700"
+   770→              disabled={assigning || !assignTarget}
+   771→              onClick={() => submitAssign([...selected])}
+   772→            >
+   773→              {assigning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   774→              Apply
+   775→            </Button>
+   776→            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} aria-label="Clear selection">
+   777→              <X className="h-4 w-4" aria-hidden /> Clear
+   778→            </Button>
+   779→          </div>
+   780→        </div>
+   781→      ) : null}
+   782→
+   783→      {/* new / edit lead dialog */}
+   784→      <LeadFormDialog
+   785→        open={formOpen}
+   786→        onOpenChange={setFormOpen}
+   787→        lead={editLead ? {
+   788→          id: editLead.id,
+   789→          leadCode: editLead.leadCode,
+   790→          department: editLead.department,
+   791→          customerName: editLead.customerName,
+   792→          companyName: editLead.companyName,
+   793→          mobile: editLead.mobile,
+   794→          whatsapp: editLead.whatsapp,
+   795→          email: editLead.email,
+   796→          city: editLead.city,
+   797→          stateId: editLead.stateId ?? editLead.state?.id ?? null,
+   798→          countryId: editLead.countryId ?? editLead.country?.id ?? null,
+   799→          businessTypeId: editLead.businessTypeId,
+   800→          productInterest: editLead.productInterest,
+   801→          requirementNotes: editLead.requirementNotes,
+   802→          monthlyVolume: editLead.monthlyVolume,
+   803→          budget: editLead.budget,
+   804→          sourceId: editLead.sourceId ?? editLead.source?.id ?? null,
+   805→          visitDate: editLead.visitDate,
+   806→          visitTime: editLead.visitTime,
+   807→          priority: editLead.priority,
+   808→          notes: editLead.notes,
+   809→          stageId: editLead.stageId ?? editLead.stage?.id ?? null,
+   810→        } : null}
+   811→        onSaved={() => setReloadKey((k) => k + 1)}
+   812→      />
+   813→
+   814→      {/* delete confirmation */}
+   815→      <AlertDialog open={Boolean(deleteLead)} onOpenChange={(o) => { if (!o) setDeleteLead(null) }}>
+   816→        <AlertDialogContent>
+   817→          <AlertDialogHeader>
+   818→            <AlertDialogTitle>Delete lead {deleteLead?.leadCode}?</AlertDialogTitle>
+   819→            <AlertDialogDescription>
+   820→              This permanently removes {deleteLead?.customerName} and all linked activity, follow-ups, calls and orders. This action cannot be undone.
+   821→            </AlertDialogDescription>
+   822→          </AlertDialogHeader>
+   823→          <AlertDialogFooter>
+   824→            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+   825→            <AlertDialogAction
+   826→              className="bg-rose-600 hover:bg-rose-700"
+   827→              disabled={deleting}
+   828→              onClick={(e) => {
+   829→                e.preventDefault()
+   830→                confirmDelete()
+   831→              }}
+   832→            >
+   833→              {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   834→              Delete
+   835→            </AlertDialogAction>
+   836→          </AlertDialogFooter>
+   837→        </AlertDialogContent>
+   838→      </AlertDialog>
+   839→
+   840→      {/* single reassign dialog (management) */}
+   841→      <Dialog open={assignOpen} onOpenChange={(o) => { if (!assigning) setAssignOpen(o) }}>
+   842→        <DialogContent className="sm:max-w-sm">
+   843→          <DialogHeader>
+   844→            <DialogTitle>Assign / Reassign Lead</DialogTitle>
+   845→            <DialogDescription>
+   846→              {assignIds.length} lead(s) will be assigned to the selected executive. Sticky ownership moves with the lead.
+   847→            </DialogDescription>
+   848→          </DialogHeader>
+   849→          <div className="space-y-1.5">
+   850→            <Label>Executive</Label>
+   851→            <Select value={assignTarget} onValueChange={setAssignTarget} disabled={assigning}>
+   852→              <SelectTrigger aria-label="Select executive"><SelectValue placeholder="Select executive" /></SelectTrigger>
+   853→              <SelectContent>
+   854→                {execOptions.map((o) => (
+   855→                  <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+   856→                ))}
+   857→              </SelectContent>
+   858→            </Select>
+   859→          </div>
+   860→          <DialogFooter className="gap-2">
+   861→            <Button variant="outline" disabled={assigning} onClick={() => setAssignOpen(false)}>Cancel</Button>
+   862→            <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={assigning || !assignTarget} onClick={() => submitAssign(assignIds)}>
+   863→              {assigning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+   864→              Assign
+   865→            </Button>
+   866→          </DialogFooter>
+   867→        </DialogContent>
+   868→      </Dialog>
+   869→
+   870→      <ImportDialog
+   871→        open={importOpen}
+   872→        onOpenChange={setImportOpen}
+   873→        defaultDept={user?.department ?? filters.dept ?? 'ONLINE'}
+   874→        onDone={() => setReloadKey((k) => k + 1)}
+   875→      />
+   876→    </div>
+   877→  )
+   878→}
+   879→
+   880→// ---------- import dialog ----------
+   881→
+   882→const HEADER_ALIASES: Record<string, string> = {
+   883→  customername: 'customerName', name: 'customerName', customer: 'customerName',
+   884→  mobile: 'mobile', phone: 'mobile', number: 'mobile',
+   885→  whatsapp: 'whatsapp', email: 'email', city: 'city',
+   886→  company: 'companyName', companyname: 'companyName',
+   887→  productinterest: 'productInterest', product: 'productInterest',
+   888→  notes: 'notes', note: 'notes', budget: 'budget', monthlyvolume: 'monthlyVolume',
+   889→}
+   890→
+   891→function parseImportCsv(text: string): { rows: Record<string, string>[]; error: string | null } {
+   892→  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+   893→  if (lines.length === 0) return { rows: [], error: 'Paste at least one data row' }
+   894→  let headers: string[] | null = null
+   895→  const first = lines[0].toLowerCase().replace(/[\s_]/g, '')
+   896→  if (first.includes('customer') || first.includes('mobile') || first.includes('name')) {
+   897→    headers = lines[0].split(',').map((h) => HEADER_ALIASES[h.trim().toLowerCase().replace(/[\s_]/g, '')] ?? '')
+   898→    lines.shift()
+   899→  }
+   900→  const positional = ['customerName', 'mobile', 'email', 'city', 'productInterest', 'notes']
+   901→  const rows = lines.map((line) => {
+   902→    const cols = line.split(',').map((c) => c.trim())
+   903→    const row: Record<string, string> = {}
+   904→    if (headers) {
+   905→      headers.forEach((h, i) => {
+   906→        if (h && cols[i] !== undefined && cols[i] !== '') row[h] = cols[i]
+   907→      })
+   908→    } else {
+   909→      positional.forEach((h, i) => {
+   910→        if (cols[i] !== undefined && cols[i] !== '') row[h] = cols[i]
+   911→      })
+   912→    }
+   913→    return row
+   914→  })
+   915→  return { rows, error: null }
+   916→}
+   917→
+   918→function ImportDialog({ open, onOpenChange, defaultDept, onDone }: {
+   919→  open: boolean
+   920→  onOpenChange: (open: boolean) => void
+   921→  defaultDept: string
+   922→  onDone: () => void
+   923→}) {
+   924→  const { toast } = useToast()
+   925→  const [dept, setDept] = useState(defaultDept || 'ONLINE')
+   926→  const [text, setText] = useState('')
+   927→  const [submitting, setSubmitting] = useState(false)
+   928→  const [result, setResult] = useState<{ created: number; skipped: { mobile?: string; reason: string }[] } | null>(null)
+   929→
+   930→  useEffect(() => {
+   931→    if (open) {
+   932→      setResult(null)
+   933→      setDept(defaultDept || 'ONLINE')
+   934→    }
+   935→  }, [open, defaultDept])
+   936→
+   937→  const parsed = text.trim() ? parseImportCsv(text) : { rows: [], error: null }
+   938→
+   939→  const submit = async () => {
+   940→    if (parsed.error) {
+   941→      toast({ title: 'Cannot import', description: parsed.error, variant: 'destructive' })
+   942→      return
+   943→    }
+   944→    if (parsed.rows.length === 0) {
+   945→      toast({ title: 'Cannot import', description: 'No valid rows found', variant: 'destructive' })
+   946→      return
+   947→    }
+   948→    setSubmitting(true)
+   949→    try {
+   950→      const res = await api<{ created: number; skipped: { mobile?: string; reason: string }[] }>('/api/leads/bulk', {
+   951→        method: 'POST',
+   952→        body: { department: dept, rows: parsed.rows },
+   953→      })
+   954→      setResult(res)
+   955→      toast({ title: 'Import finished', description: `${res.created} created, ${res.skipped.length} skipped` })
+   956→      onDone()
+   957→    } catch (e) {
+   958→      toast({ title: 'Import failed', description: (e as Error).message, variant: 'destructive' })
+   959→    } finally {
+   960→      setSubmitting(false)
+   961→    }
+   962→  }
+   963→
+   964→  return (
+   965→    <Dialog open={open} onOpenChange={(o) => { if (!submitting) onOpenChange(o) }}>
+   966→      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
+   967→        <DialogHeader>
+   968→          <DialogTitle>Import Leads</DialogTitle>
+   969→          <DialogDescription>
+   970→            Paste CSV rows. First line may be a header (customerName, mobile, email, city, productInterest, notes). Duplicate mobiles are skipped automatically.
+   971→          </DialogDescription>
+   972→        </DialogHeader>
+   973→        <div className="space-y-3">
+   974→          <div className="space-y-1.5">
+   975→            <Label>Department *</Label>
+   976→            <Select value={dept} onValueChange={setDept} disabled={submitting}>
+   977→              <SelectTrigger aria-label="Import department"><SelectValue /></SelectTrigger>
+   978→              <SelectContent>
+   979→                {DEPARTMENTS.map((d) => (
+   980→                  <SelectItem key={d} value={d}>{DEPT_LABELS[d]}</SelectItem>
+   981→                ))}
+   982→              </SelectContent>
+   983→            </Select>
+   984→          </div>
+   985→          <div className="space-y-1.5">
+   986→            <Label htmlFor="import-csv">CSV data</Label>
+   987→            <Textarea
+   988→              id="import-csv"
+   989→              rows={8}
+   990→              value={text}
+   991→              onChange={(e) => setText(e.target.value)}
+   992→              disabled={submitting}
+   993→              className="font-mono text-xs"
+   994→              placeholder={'customerName,mobile,city,productInterest\nRamesh Kumar,9876543210,Surat,Bridal lehenga\nPriya Exports,9876500001,Mumbai,Kurti set'}
+   995→            />
+   996→            {text.trim() ? (
+   997→              <p className={cn('text-xs', parsed.error ? 'text-rose-600' : 'text-emerald-700')}>
+   998→                {parsed.error ?? `${parsed.rows.length} row(s) parsed and ready to import`}
+   999→              </p>
+  1000→            ) : null}
+  1001→          </div>
+  1002→          {result ? (
+  1003→            <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm">
+  1004→              <p className="font-medium text-emerald-700">{result.created} lead(s) created</p>
+  1005→              {result.skipped.length ? (
+  1006→                <div className="mt-2 max-h-32 overflow-y-auto">
+  1007→                  <p className="text-xs font-medium text-stone-500">Skipped:</p>
+  1008→                  <ul className="mt-1 space-y-0.5 text-xs text-stone-600">
+  1009→                    {result.skipped.map((s, i) => (
+  1010→                      <li key={i}>{s.mobile || '—'} — {s.reason}</li>
+  1011→                    ))}
+  1012→                  </ul>
+  1013→                </div>
+  1014→              ) : null}
+  1015→            </div>
+  1016→          ) : null}
+  1017→        </div>
+  1018→        <DialogFooter className="gap-2">
+  1019→          <Button variant="outline" disabled={submitting} onClick={() => onOpenChange(false)}>Close</Button>
+  1020→          <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={submitting || !text.trim()} onClick={submit}>
+  1021→            {submitting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
+  1022→            Import {parsed.rows.length ? `${parsed.rows.length} rows` : ''}
+  1023→          </Button>
+  1024→        </DialogFooter>
+  1025→      </DialogContent>
+  1026→    </Dialog>
+  1027→  )
+  1028→}
+  1029→
