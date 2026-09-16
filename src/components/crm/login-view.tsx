@@ -13,7 +13,7 @@ import {
   Target,
   Workflow,
 } from 'lucide-react'
-import { api } from '@/lib/client'
+import { api, setAuthToken } from '@/lib/client'
 import type { UserInfo } from '@/types/crm'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
@@ -53,10 +53,13 @@ export default function LoginView() {
     setError('')
     setLoading(true)
     try {
-      const res = await api<{ user: UserInfo }>('/api/auth/login', {
+      const res = await api<{ token?: string; user: UserInfo }>('/api/auth/login', {
         method: 'POST',
         body: { email, password },
       })
+      // Store the Bearer token so the session survives in cookie-blocked
+      // contexts (cross-site preview iframe) and re-auths after reload.
+      setAuthToken(res.token ?? null)
       setUser(res.user)
     } catch (err) {
       setError((err as Error).message || 'Login failed. Please try again.')

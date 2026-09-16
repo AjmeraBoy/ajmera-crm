@@ -1,4 +1,4 @@
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { randomBytes } from 'crypto'
 import { db } from '@/lib/db'
 
@@ -28,10 +28,38 @@ export async function createSession(userId: string): Promise<{ token: string; ex
   return { token, expiresAt }
 }
 
-export async function getSessionUser(): Promise<SessionUser | null> {
+/**
+ * Resolve the raw session token for the current request.
+ * Sources, in priority order:
+ *   1. `af_crm_session` cookie (normal same-site browser access)
+ *   2. `Authorization: Bearer <token>` header (cookie-restricted contexts,
+ *      e.g. the sandbox preview panel embedding the app in a cross-site
+ *      iframe where third-party cookies are blocked)
+ */
+export async function resolveSessionToken(): Promise<string | null> {
   try {
     const store = await cookies()
-    const token = store.get(SESSION_COOKIE)?.value
+    const cookieToken = store.get(SESSION_COOKIE)?.value
+    if (cookieToken) return cookieToken
+  } catch {
+    // cookies() unavailable in this context — fall through to headers
+  }
+  try {
+    const h = await headers()
+    const auth = h.get('authorization')
+    if (auth?.toLowerCase().startsWith('bearer ')) {
+      const token = auth.slice(7).trim()
+      if (token) return token
+    }
+  } catch {
+    // headers() unavailable — no token
+  }
+  return null
+}
+
+export async function getSessionUser(): Promise<SessionUser | null> {
+  try {
+    const token = await resolveSessionToken()
     if (!token) return null
     const session = await db.session.findUnique({
       where: { token },
@@ -60,8 +88,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 }
 
 export async function destroySession(): Promise<void> {
-  const store = await cookies()
-  const token = store.get(SESSION_COOKIE)?.value
+  const token = await resolveSessionToken()
   if (token) {
     await db.session.deleteMany({ where: { token } }).catch(() => {})
   }

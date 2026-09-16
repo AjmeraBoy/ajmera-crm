@@ -1,12 +1,47 @@
 /** Client-side fetch helper for CRM API. Always relative paths, JSON, credentials included. */
+
+/**
+ * Bearer session token — used when cookies are unavailable/blocked (e.g. the
+ * app runs inside a cross-site preview iframe where third-party cookies are
+ * stripped). Kept in sessionStorage (per-tab, partitioned, auto-cleared) and
+ * mirrored in memory for synchronous access by the socket layer.
+ */
+const TOKEN_KEY = 'af_crm_session_token'
+let memoryToken: string | null = null
+
+if (typeof window !== 'undefined') {
+  try {
+    memoryToken = window.sessionStorage.getItem(TOKEN_KEY)
+  } catch {
+    memoryToken = null
+  }
+}
+
+export function getAuthToken(): string | null {
+  return memoryToken
+}
+
+export function setAuthToken(token: string | null): void {
+  memoryToken = token
+  if (typeof window === 'undefined') return
+  try {
+    if (token) window.sessionStorage.setItem(TOKEN_KEY, token)
+    else window.sessionStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // storage unavailable (privacy mode) — memory token still works this session
+  }
+}
+
 export async function api<T = unknown>(
   path: string,
   opts?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown }
 ): Promise<T> {
   const method = opts?.method || 'GET'
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (memoryToken) headers.Authorization = `Bearer ${memoryToken}`
   const res = await fetch(path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: method === 'GET' || opts?.body === undefined ? undefined : JSON.stringify(opts.body),
     cache: 'no-store',
     credentials: 'same-origin',

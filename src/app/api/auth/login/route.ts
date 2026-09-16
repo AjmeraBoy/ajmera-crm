@@ -25,7 +25,6 @@ export const POST = route(async (req) => {
     path: '/',
     maxAge: SESSION_MAX_AGE,
   })
-
   const sessionUser: SessionUser = {
     id: user.id,
     name: user.name,
@@ -38,7 +37,10 @@ export const POST = route(async (req) => {
     dailyCallTarget: user.dailyCallTarget,
   }
   await audit(sessionUser, 'LOGIN', 'User', user.id, { email })
+  // `token` lets cookie-restricted clients (cross-site iframe / preview panel,
+  // where third-party cookies are blocked) authenticate via Bearer header.
   return ok({
+    token,
     user: {
       ...sessionUser,
       team: user.team ? { id: user.team.id, name: user.team.name, department: user.team.department } : null,

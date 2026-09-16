@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
+import { getAuthToken } from '@/lib/client'
 
 let socket: Socket | null = null
 let refCount = 0
@@ -22,6 +23,10 @@ export function getCrmSocket(): Socket {
       transports: ['websocket', 'polling'],
       withCredentials: true,
       reconnectionDelayMax: 10000,
+      // Cookie-restricted contexts (cross-site preview iframe) block cookies,
+      // so also hand the relay the Bearer session token. The function form is
+      // re-evaluated on every (re)connect attempt.
+      auth: (cb) => cb({ token: getAuthToken() ?? undefined }),
     })
   }
   return socket
@@ -116,7 +121,7 @@ export function useCrmSocket(): boolean {
 
     const onConnect = () => {
       setConnected(true)
-      s.emit('subscribe', {})
+      s.emit('subscribe', { token: getAuthToken() ?? undefined })
     }
     const onDisconnect = () => setConnected(false)
     const onAuthError = () => {
@@ -129,7 +134,7 @@ export function useCrmSocket(): boolean {
     s.on('auth-error', onAuthError)
     if (s.connected) {
       setConnected(true)
-      s.emit('subscribe', {})
+      s.emit('subscribe', { token: getAuthToken() ?? undefined })
     }
 
     return () => {

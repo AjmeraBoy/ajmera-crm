@@ -38,12 +38,22 @@ const io = new Server(httpServer, {
 
 type SessionInfo = { id: string; name: string; role: string; department: string | null }
 
-async function validateSession(cookieHeader: string | undefined): Promise<SessionInfo | null> {
-  if (!cookieHeader) return null
+/**
+ * Validate a browser session against the CRM backend.
+ * Identity sources, in priority order:
+ *   1. Bearer token (socket.io handshake `auth.token` or subscribe payload) —
+ *      used when the browser blocks cookies (cross-site preview iframe).
+ *   2. Forwarded `Cookie` header from the socket.io handshake.
+ */
+async function validateSession(token: string | undefined, cookieHeader: string | undefined): Promise<SessionInfo | null> {
+  if (!token && !cookieHeader) return null
+  const headers: Record<string, string> = { 'x-internal-secret': INTERNAL_SECRET }
+  if (token) headers.authorization = `Bearer ${token}`
+  else headers.cookie = cookieHeader as string
   try {
     const res = await fetch(`${CRM_BASE}/api/auth/validate-session`, {
       method: 'POST',
-      headers: { cookie: cookieHeader, 'x-internal-secret': INTERNAL_SECRET },
+      headers,
       signal: AbortSignal.timeout(5000),
     })
     if (!res.ok) return null
@@ -73,11 +83,12 @@ async function validateConversationRoom(user: SessionInfo, conversationId: strin
 io.on('connection', (socket: Socket) => {
   let session: SessionInfo | null = null
 
-  socket.on('subscribe', async (data: { rooms?: string[]; conversationId?: string }, ack?: (res: unknown) => void) => {
+  socket.on('subscribe', async (data: { rooms?: string[]; conversationId?: string; token?: string }, ack?: (res: unknown) => void) => {
     if (!session) {
-      // Validate on first subscribe (cookie arrives with handshake)
+      // Validate on first subscribe — Bearer token first, cookie fallback
       const rawCookie = (socket.request as { headers?: Record<string, string | undefined> }).headers?.cookie
-      session = await validateSession(rawCookie)
+      const handshakeToken = (socket.handshake.auth as { token?: string } | undefined)?.token
+      session = await validateSession(data?.token || handshakeToken, rawCookie)
       if (!session) {
         socket.emit('auth-error', { message: 'Session invalid. Please login again.' })
         socket.disconnect(true)

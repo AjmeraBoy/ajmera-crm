@@ -30,7 +30,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react'
-import { api } from '@/lib/client'
+import { api, setAuthToken } from '@/lib/client'
 import { DEPT_LABELS, ROLE_COLORS, ROLE_LABELS, navForRoles } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/app-store'
@@ -89,6 +89,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     } catch {
       // session may already be dead — proceed with local logout regardless
     }
+    setAuthToken(null)
     setUser(null)
     setUnread(0)
     setDeptFilter('')

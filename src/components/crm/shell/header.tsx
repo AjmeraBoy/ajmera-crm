@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { Bell, LogOut, Menu } from 'lucide-react'
-import { api } from '@/lib/client'
+import { api, setAuthToken } from '@/lib/client'
 import { NAV_ITEMS, ROLE_COLORS, ROLE_LABELS } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/app-store'
@@ -57,6 +57,7 @@ export default function Header() {
     } catch {
       // proceed with local logout regardless
     }
+    setAuthToken(null)
     setUser(null)
     setUnread(0)
     setDeptFilter('')

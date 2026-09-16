@@ -182,3 +182,23 @@ Work Log:
 
 Stage Summary:
 - FULL communication layer LIVE and verified end-to-end at the code level. WhatsApp/SIP delivery requires real provider credentials (WHATSAPP_API_KEY from FlexiWaba panel + live API campaign; SIP click-to-call URL from telephony provider). Webhook pipeline is production-ready TODAY — Alendei webhook URL: {PUBLIC_BASE_URL}/api/webhooks/whatsapp?secret=<COMM_WEBHOOK_SECRET>
+
+---
+Task ID: 5 (hotfix)
+Agent: Orchestrator (Z.ai Code)
+Task: Fix auto-logout 2-3s after login (preview panel / iframe session bug)
+
+Work Log:
+- DIAGNOSIS: Preview Panel embeds the app in a cross-site iframe; browsers block SameSite=Lax cookies there. Login succeeded (in-memory state) but the socket relay received no cookie on subscribe -> auth-error -> crm:auth-error -> "Session expired" auto-logout at 2-3s. Direct-tab QA passed earlier because top-level access sends cookies.
+- FIX (Bearer-token sessions alongside cookies, no security downgrade):
+  - src/lib/auth.ts: resolveSessionToken() = cookie OR Authorization Bearer header; getSessionUser/destroySession token-source agnostic
+  - login route: response now includes session token; logout clears cookie + DB row for both sources
+  - src/lib/client.ts: sessionStorage-backed token store (getAuthToken/setAuthToken); api() attaches Authorization when present
+  - login-view stores token; header/sidebar logout clears it
+  - use-crm-socket.ts: io auth callback sends token on every (re)connect; subscribe payload includes token
+  - mini-services/socket-service/index.ts: validateSession(token, cookie) forwards Bearer to validate-session, cookie fallback; socket restarted (port 3003/3004 OK)
+- VERIFY (agent-browser via Caddy :81): login -> 12s+ still logged in; token in sessionStorage; reload keeps session; HARD CASE cookies.clear() + reload (0 cookies, token only) -> session restored, still logged in after 16s, no "Session expired" toast, validate-session 200 via Bearer in dev.log; curl Bearer-only /api/auth/me + validate-session both 200; lint 0 errors.
+
+Stage Summary:
+- Root cause: third-party cookie blocking in preview iframe, not session expiry.
+- Sessions now work in ALL contexts: direct tab (cookie), preview iframe (Bearer token via sessionStorage), page refresh in both. Old token behavior unchanged for normal browsers.
