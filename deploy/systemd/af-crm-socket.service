@@ -1,0 +1,16 @@
+[Unit]
+Description=Ajmera Fashion CRM — Real-time relay (socket.io :3003, internal :3004)
+After=network.target af-crm.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/crm/mini-services/socket-service
+ExecStart=/root/.bun/bin/bun --env-file=/var/www/crm/.env index.ts
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/af-crm/socket.log
+StandardError=append:/var/log/af-crm/socket.err.log
+
+[Install]
+WantedBy=multi-user.target

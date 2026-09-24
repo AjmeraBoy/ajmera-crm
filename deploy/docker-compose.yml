@@ -1,0 +1,41 @@
+# Ajmera Fashion CRM — Docker Compose
+# docker compose up -d --build
+# .env ko project root me rakho; DOMAIN env me apna domain do.
+services:
+  crm:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Container ke andar DB persistent volume par
+      DATABASE_URL: /data/custom.db
+    volumes:
+      - crm-db:/data
+    restart: unless-stopped
+
+  socket:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    command: ["bun", "mini-services/socket-service/index.ts"]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-crm.ajmeraexample.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  crm-db:
+  caddy-data:

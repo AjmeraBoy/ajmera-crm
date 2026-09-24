@@ -202,3 +202,15 @@ Work Log:
 Stage Summary:
 - Root cause: third-party cookie blocking in preview iframe, not session expiry.
 - Sessions now work in ALL contexts: direct tab (cookie), preview iframe (Bearer token via sessionStorage), page refresh in both. Old token behavior unchanged for normal browsers.
+
+---
+Task ID: 6
+Agent: Orchestrator (Z.ai Code)
+Task: Netlify hosting issue diagnosis + production deployment kit
+
+Work Log:
+- Diagnosed user's Netlify deploy (transcendent-lollipop-718ad1.netlify.app): both / and /super-admin return 401 Netlify Edge Access login redirect (site protection ON). Also explained why Netlify cannot host this CRM at all: SQLite needs persistent disk (Netlify serverless is ephemeral), socket.io relay is a long-running process, webhooks need persistent DB, and /super-admin is not a route — the whole CRM lives at /.
+- Built deploy/ kit: DEPLOYMENT.md (Hinglish step-by-step VPS guide: VPS specs, DNS A record, .env setup incl. openssl secret generation, one-command deploy, first-login password change, WhatsApp/SIP webhook hookup, update/redeploy, logs, backup cron), .env.production.example (all comm vars + DATABASE_URL absolute-path note for standalone server), Caddyfile (domain + auto-HTTPS + XTransformPort gateway passthrough), deploy-vps.sh (idempotent one-shot: bun+caddy install, prisma generate/db push, next build, systemd units, caddy config from PUBLIC_BASE_URL domain, ufw), systemd/af-crm.service + af-crm-socket.service, Dockerfile (bun multi-stage, standalone) + docker-compose.yml (crm + socket + caddy, persistent volumes).
+
+Stage Summary:
+- Production path decided: single VPS (Ubuntu 24.04, 2vCPU/4GB) + domain + deploy/deploy-vps.sh = live CRM with SSL, persistent SQLite, socket relay, webhooks. Docker alternative provided. Netlify rejected with concrete reasons. User needs: VPS + domain + provider credentials.

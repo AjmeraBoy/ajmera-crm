@@ -1,0 +1,19 @@
+[Unit]
+Description=Ajmera Fashion CRM — Next.js app (port 3000)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/crm
+EnvironmentFile=/var/www/crm/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/root/.bun/bin/bun /var/www/crm/.next/standalone/server.js
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/af-crm/app.log
+StandardError=append:/var/log/af-crm/app.err.log
+
+[Install]
+WantedBy=multi-user.target

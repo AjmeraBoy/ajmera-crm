@@ -1,0 +1,31 @@
+# Ajmera Fashion CRM — Production Caddy config
+# /etc/caddy/Caddyfile me copy karo. Domain apna daalo.
+# Caddy automatically Let's Encrypt SSL certificate le lega (80/443 open hone par).
+
+crm.ajmeraexample.com {
+	# Socket.io relay + internal service routing (?XTransformPort=3003 etc.)
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy 127.0.0.1:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# CRM Next.js app
+	handle {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	encode gzip
+}
