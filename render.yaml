@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: ajmera-crm
+    runtime: node
+    plan: starter
+    region: singapore
+
+    buildCommand: bun install --frozen-lockfile && bun run db:generate && bun run build
+
+    preDeployCommand: bun run db:push
+
+    startCommand: bun .next/standalone/server.js
+
+    healthCheckPath: /
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: DATABASE_URL
+        value: file:/var/data/ajmera-crm.db
+
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+
+    disk:
+      name: ajmera-crm-data
+      mountPath: /var/data
+      sizeGB: 10
